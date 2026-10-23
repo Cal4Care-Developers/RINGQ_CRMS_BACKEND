@@ -8,6 +8,10 @@ Backend code, database scripts and documentation for RingQ's three CRM integrati
 | **Qontak CRM** (Mekari) | [`qontak/`](qontak/) | One Qontak **Task** (category "Call") on the contact | Signed RingQ link in the task detail | No | [qontak/USER_GUIDE.md](qontak/USER_GUIDE.md) |
 | **Freshdesk** | [`freshdesk/`](freshdesk/) | One Freshdesk **ticket** (source Phone) on the contact | Audio file attached as a private note | Yes: RingQ app in Freshdesk's phone sidebar | [freshdesk/USER_GUIDE.md](freshdesk/USER_GUIDE.md) |
 
+All three are configured in RingQ under **Settings → Integrations → CRM**:
+
+![RingQ Settings → Integrations → CRM with the HubSpot, Qontak and Freshdesk cards](docs/images/ringq-crm-integrations.png)
+
 All three:
 - look up the caller's contact by phone during the call, and show it in a RingQ popup (and optionally open it in the CRM);
 - log **one** record per call, also when a call rings on several devices or an event is retried;

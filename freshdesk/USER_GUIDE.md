@@ -135,7 +135,15 @@ Check it in a browser: `https://<server>/click2call/freshdesk/` should show **Ri
 
 In RingQ, as an admin: **Settings → Integrations → CRM → Freshdesk → Configure**.
 
+![RingQ Settings → Integrations → CRM: the Freshdesk card](images/ringq-crm-integrations.png)
+
+*Settings → Integrations → CRM. The Freshdesk card shows Not configured, Enabled, Disabled or Connection error. Click **Configure**.*
+
 ### 6.1 Account
+
+![Freshdesk settings in RingQ: status, enable switch, Freshdesk address, API key, dialer options](images/ringq-freshdesk-settings-1.png)
+
+*Top of the Freshdesk settings: status (account, the agent tickets are created as, last test and sync), the **Enable** switch, the **Freshdesk address** and the **API key** (shown masked once stored). Screenshots use sample data.*
 
 | Field | What to enter |
 |---|---|
@@ -151,6 +159,14 @@ Click **Save configuration**. RingQ tests the connection straight away. The stat
 Use **Test connection** at any time; it does not save anything. **Disconnect** deletes the stored key, stops logging, signs out every Freshdesk dialer and disables recording links. Tickets already in Freshdesk are kept.
 
 ### 6.2 All settings
+
+![Freshdesk settings: call logging, ticket status and priority, caller not in Freshdesk, recordings](images/ringq-freshdesk-settings-2.png)
+
+*Call logging (journaling, unanswered calls, calls between extensions), ticket status and priority, what to do with callers not in Freshdesk, and recordings.*
+
+![Freshdesk settings: recordings and CRM screen pop](images/ringq-freshdesk-settings-3.png)
+
+*Recordings (attach the file, optional playback link) and the CRM screen pop.*
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -290,6 +306,10 @@ Open the contact (**Contacts → the contact**) or **Tickets**, filter by tag `r
 Freshdesk shows attachments as file chips and does not play audio inside the note. Click the chip (download) or **Play recording**.
 
 ### 9.2 In RingQ
+
+![RingQ call popup for Freshdesk after a call: contact, call times, ticket saved with recording, outcome and notes](images/ringq-freshdesk-call-popup.png)
+
+*The RingQ popup after a call: the caller's Freshdesk contact (with **Open in Freshdesk**), the call, **Saved as ticket #… Recording attached**, **Open ticket**, and the outcome and notes form.*
 
 - **RingQ popup** (RingQ app): contact, number, start/answer times, agent; after the call, **Freshdesk ticket: Saved / Not logged** with the reason, the ticket link, and the notes form.
 - **RingQ dialer in Freshdesk**: the same summary after each call.

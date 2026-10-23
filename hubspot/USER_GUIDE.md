@@ -116,10 +116,26 @@ The access token is stored **encrypted** with a key derived from RingQ's own app
 
 In RingQ, as an admin: **Settings → Integrations → CRM → HubSpot → Configure**.
 
+![RingQ Settings → Integrations → CRM: the HubSpot card](images/ringq-crm-integrations.png)
+
+*Settings → Integrations → CRM. Click **Configure** on the HubSpot card.*
+
+![HubSpot settings in RingQ: status, enable switch, private app access token, granted scopes, call options](images/ringq-hubspot-settings-1.png)
+
+*Top of the HubSpot settings: status (portal, last test, last call logged), the **Enable** switch, the **Private app access token** (masked once stored) and the **scopes** the token has (green = granted). Screenshots use sample data.*
+
 1. Switch **Enable HubSpot integration** on.
 2. Paste the token into **Private app access token**.
 3. Click **Test connection**. It checks the token, reads your portal, the granted scopes (green chips), and which call statuses and outcomes your portal offers.
 4. Click **Save**. The status should be **Connected**.
+
+![HubSpot settings: unanswered calls, company link, contact creation, screen pop, recordings](images/ringq-hubspot-settings-2.png)
+
+*Call options (unanswered calls, company link, contact creation, automatic contacts), screen pop and recordings.*
+
+![HubSpot settings: screen pop, recordings, recording link address, AI call intelligence](images/ringq-hubspot-settings-3.png)
+
+*Recordings with the **Recording link address**, and the optional AI call intelligence.*
 
 After saving, the token field is empty with a "Stored ••••xxxx" hint; leave it empty to keep the token. **Disconnect** deletes the token, stops logging, revokes every recording link already in HubSpot and signs out HubSpot dialers. Calls already in HubSpot are kept.
 
@@ -180,6 +196,10 @@ Open the contact → **Activity** timeline → the **Call** card (also under **C
 | Associations | The contact, and its company if enabled |
 
 ### In RingQ
+
+![RingQ contact panel for HubSpot after a call: contact, call times, logged on the timeline with recording, call notes](images/ringq-hubspot-call-popup.png)
+
+*The RingQ contact panel after a call: the HubSpot contact (lifecycle, location, HubSpot ID, **Open in HubSpot**), the call, **Logged — saved to HubSpot on the contact timeline with recording**, the notes form, and the call reference and HubSpot call id.*
 
 The contact panel during and after each call (contact details, **Logged** status, notes form), and **Call Logs** as before.
 

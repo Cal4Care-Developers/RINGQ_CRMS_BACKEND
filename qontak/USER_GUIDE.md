@@ -102,10 +102,26 @@ Done **once per RingQ server**. Full details: [`docs/INSTALL.md`](docs/INSTALL.m
 
 In RingQ, as an admin: **Settings → Integrations → CRM → Qontak → Configure**.
 
+![RingQ Settings → Integrations → CRM: the Qontak card](images/ringq-crm-integrations.png)
+
+*Settings → Integrations → CRM. Click **Configure** on the Qontak card.*
+
+![Qontak settings in RingQ: status, enable switch, environment, Client ID, Client Secret, SSO ID, dialer options](images/ringq-qontak-settings-1.png)
+
+*Top of the Qontak settings: status, the **Enable** switch, **Environment**, **Client ID**, **Client Secret** (masked once stored) and the optional **Acting CRM user SSO ID**. Screenshots use sample data.*
+
 1. Switch **Enable Qontak integration** on.
 2. **Environment:** Production (`api.mekari.com`) or Sandbox (`api.mekari.io`).
 3. Enter **Client ID** and **Client Secret** (section 3), and optionally **Acting CRM user SSO ID**.
 4. Click **Test connection**, then **Save configuration**. The status should be **Connected**.
+
+![Qontak settings: contact creation, task category, time zone, CRM screen pop and its addresses](images/ringq-qontak-settings-2.png)
+
+*Contact creation, **Task category** and **Time zone**, and the CRM screen pop with its page addresses.*
+
+![Qontak settings: screen pop target and addresses, AI call intelligence](images/ringq-qontak-settings-3.png)
+
+*What the screen pop opens (the call's Qontak task, the customer page, or a RingQ window) and the optional AI call intelligence.*
 
 After saving, the secret field shows "stored, leave blank to keep". **Disconnect** deletes the stored secret, stops logging, and revokes every recording link already in Qontak. Tasks already in Qontak are kept.
 
@@ -151,6 +167,10 @@ After saving, the secret field shows "stored, leave blank to keep". **Disconnect
 **Recording:** Qontak's API cannot store audio, so the task holds a **signed RingQ link**. Qontak shows task details in a rich-text editor where links may not be clickable, so the address is also written as text: copy it into the browser to play the call. Links stay valid until **Disconnect**.
 
 ### In RingQ
+
+![RingQ call popup for Qontak after a call: contact, call times, call saved to Qontak with recording link](images/ringq-qontak-call-popup.png)
+
+*The RingQ popup after a call: the Qontak contact (job title, phone, email, company, owner, status), the call, and **Qontak log: Synced — Call saved to Qontak with recording link**.*
 
 The popup during and after each call, and **Call Logs** as before (same recording).
 
