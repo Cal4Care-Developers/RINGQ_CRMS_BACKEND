@@ -122,26 +122,60 @@ RingQ stores it for webhook signature checks; calling works without it.
 
 ## Part C. Configure WhatsApp in RingQ
 
-1. Sign in to RingQ as an admin → **Settings** → **Integrations** → **Micro apps**.
-2. Click the **WhatsApp** card (next to Telegram). The card shows **Not configured**, **Active**, **Configured**, **Failed** or **Deactivated**.
-3. Open the **Configure** tab and fill in:
+Screenshots are from a working tenant (sgringq100). Tokens are never shown; the other IDs are the tenant's own.
 
-   | Field | Value |
-   |---|---|
-   | Access token | The permanent `EAA…` token (Step A4) |
-   | App secret | Optional (Step A5) |
-   | Phone number ID | Step A2 |
-   | Business account ID | Optional (Step A2) |
-   | WhatsApp Business number | Step A3, with country code |
-   | PBX domain | Filled in with this server's FQDN; leave it |
-   | SIP TLS port | `5061` |
-   | Route calls to | The **extension**, **queue** or **IVR** that should ring |
+### Step C1. Open the WhatsApp card
 
-4. Click **Configure gateway**. RingQ shows each step as it runs (about 30–60 seconds):
-   validate → save credentials (encrypted) → connect to Meta → enable calling → enable SIP → set SDES → get the Meta SIP password → create the gateway → allow Meta IPs → create the DID route → reload → **Gateway active**.
-5. The **Overview** tab now shows **Active**, the number and the destination.
+Sign in to RingQ as an admin → **Global Settings** → **Integrations** → **Micro apps**. The **WhatsApp** card sits next to Telegram. Its badge shows **Not configured**, **Active**, **Configured**, **Failed** or **Deactivated**. Click **Configure**.
+
+![Integrations → Micro apps with the WhatsApp card (Active)](../whatsapp/images/01-micro-apps.jpg)
+
+### Step C2. Enter the Meta credentials (Configure tab)
+
+Open the **Configure** tab and paste the values from Part A:
+
+| Field | Value |
+|---|---|
+| Access token | The permanent `EAA…` token (Step A4). Once saved it shows *Saved — leave blank to keep*. |
+| App secret | Optional (Step A5) |
+| Phone number ID | Step A2 — the long ID, **not** the phone number |
+| Business account ID | Optional (Step A2) |
+| WhatsApp Business number | Step A3, with country code |
+
+![Configure tab: Meta / WhatsApp credentials](../whatsapp/images/03-configure-credentials.jpg)
+
+### Step C3. Choose where calls ring
+
+Scroll down to **RingQ routing**:
+
+| Field | Value |
+|---|---|
+| PBX domain | Filled in with this server's FQDN; leave it |
+| SIP TLS port | `5061` |
+| Route calls to | The **extension**, **queue** or **IVR** that should ring. The list is grouped *Extensions*, *Queues*, *IVR*. |
+
+![Configure tab: RingQ routing and the Route calls to list](../whatsapp/images/04-configure-routing.jpg)
+
+If **Route calls to** says *No destinations found* with a red message under it, the server refused the request — see Troubleshooting (`AC4031` means the `wasip` ACL line is missing).
+
+### Step C4. Run the configuration
+
+Click **Configure gateway** (shown as **Re-run configuration** once active). RingQ shows each step as it runs (about 30–60 seconds):
+validate → save credentials (encrypted) → connect to Meta → enable calling → enable SIP → set SDES → get the Meta SIP password → create the gateway → allow Meta IPs → create the DID route → reload → **Gateway active**.
 
 Tokens are never shown again. To keep the saved token when re-running, leave **Access token** blank.
+
+### Step C5. Check the Overview tab
+
+**Overview** shows the status, the WhatsApp number, where calls ring, and whether the gateway and dialplan exist in RingQ. **Refresh** re-checks; it also refreshes every 30 seconds while open.
+
+![Overview tab: Active, number, destination and gateway status](../whatsapp/images/02-overview.jpg)
+
+### Manage tab (later changes)
+
+**Reconfigure for this PBX** changes the destination or re-points Meta after a server move, using the saved credentials. **Deactivate WhatsApp gateway** stops WhatsApp calls (asks to confirm; credentials are kept).
+
+![Manage tab: Reconfigure and Deactivate](../whatsapp/images/05-manage.jpg)
 
 ---
 
