@@ -2,6 +2,8 @@
 
 RingQ's three CRM integrations are part of this backend (PHP 7.4, Phalcon 4, PostgreSQL `ringq`). Each one has its own controller, library, tables and background task inside the same `app/` tree, and its own guide.
 
+**Setting up a CRM?** Start with the step-by-step [setup guides](setup/README.md): which key each CRM needs, where to get it, and every RingQ settings screen.
+
 Calls are made and answered in RingQ. There is no dialer inside the CRMs: each CRM receives the contact lookup, the call record and the recording.
 
 | CRM | How a call is saved | Recording | Guide |

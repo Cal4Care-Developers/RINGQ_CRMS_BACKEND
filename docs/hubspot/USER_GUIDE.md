@@ -10,7 +10,7 @@
 8. [Troubleshooting](#8-troubleshooting)
 9. [Reference: files, data and security](#9-reference-files-data-and-security)
 
-Technical reference: [`TECHNICAL.md`](TECHNICAL.md) (deploy, call flow, limitations), [`API.md`](API.md) (every endpoint).
+Step-by-step setup (keys, install, RingQ settings, test call): [`../setup/HUBSPOT_SETUP.md`](../setup/HUBSPOT_SETUP.md). Technical reference: [`TECHNICAL.md`](TECHNICAL.md) (deploy, call flow, limitations), [`API.md`](API.md) (every endpoint).
 
 ---
 

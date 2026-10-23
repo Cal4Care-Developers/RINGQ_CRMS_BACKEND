@@ -10,7 +10,7 @@
 8. [Troubleshooting](#8-troubleshooting)
 9. [Reference: files, data and security](#9-reference-files-data-and-security)
 
-Technical install reference: [`INSTALL.md`](INSTALL.md).
+Step-by-step setup (keys, install, RingQ settings, test call): [`../setup/QONTAK_SETUP.md`](../setup/QONTAK_SETUP.md). Technical install reference: [`INSTALL.md`](INSTALL.md).
 
 ---
 

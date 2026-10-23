@@ -11,7 +11,7 @@
 9. [Troubleshooting](#9-troubleshooting)
 10. [Reference: files, data and security](#10-reference-files-data-and-security)
 
-Technical reference: [`TECHNICAL.md`](TECHNICAL.md).
+Step-by-step setup (keys, install, RingQ settings, test call): [`../setup/FRESHDESK_SETUP.md`](../setup/FRESHDESK_SETUP.md). Technical reference: [`TECHNICAL.md`](TECHNICAL.md).
 
 ---
 
