@@ -32,6 +32,18 @@ freshdesk/tests/       unit checks and a live Freshdesk check
 
 The `app/` files are identical to the versions deployed on sgringq100 (23 Oct 2026). The same files also live in the RingQ backend repository (`sgring100`); the frontend code is in `sgring100_frontend` (`src/integrations/<crm>/`, and the dialers `hubspot-cti/`, `freshdesk-cti/`, `freshdesk-app/`).
 
+## Database
+
+Each `<crm>/sql/` folder has the migration scripts (run these on a server; safe to run again), a rollback script, the complete table structure as `<crm>_schema.sql`, and a `README.md` describing each table.
+
+| CRM | Tables | Scripts, in order |
+|---|---|---|
+| HubSpot | `q_hubspot_config`, `q_hubspot_call_journals`, `q_hubspot_cti_tokens` | `2026_10_21_hubspot_crm.sql`, then `2026_10_22_hubspot_cti.sql` |
+| Qontak | `q_qontak_config`, `q_qontak_call_journals`, `q_qontak_webhook_events` | `2026_10_14_qontak_crm.sql` |
+| Freshdesk | `q_freshdesk_config`, `q_freshdesk_call_journals`, `q_freshdesk_cti_tokens` | `2026_10_23_freshdesk_crm.sql` |
+
+Checked on 23 Oct 2026: the live tables on sgringq100 are exactly what these scripts create (no manual changes), and each `<crm>_schema.sql` applies cleanly on an empty database. The files contain structure only: no rows and no credentials. All scripts are additive: they create only their own `q_<crm>_*` tables.
+
 ## Server notes that apply to all three
 
 | Topic | Detail |
