@@ -307,7 +307,9 @@ $di->set(
          "mcpai" => ["connectors", "discover"],
          "oauth" => ["resource", "metadata", "register", "authorize", "token", "revoke"],
          "qontak" => ["config", "testConnection", "disconnect", "contactsSearch", "contacts", "callEvents", "callJournals", "recordingsSync", "aiAnalysis", "webhooks", "recording"],
-         "hubspotcrm" => ["config", "testConnection", "disconnect", "contactsSearch", "contact", "contacts", "callEvents", "callJournals", "recordingsSync", "aiAnalysis", "ctiPair", "cti"]
+         "hubspotcrm" => ["config", "testConnection", "disconnect", "contactsSearch", "contact", "contacts", "callEvents", "callJournals", "recordingsSync", "aiAnalysis", "ctiPair", "cti"],
+         // WhatsApp (Meta SIP calling) micro app: WasipController checks the session itself.
+         "wasip" => ["health", "destinations", "load", "status", "configure", "reconfigure", "deactivate"]
       ];
       foreach ($privately as $name => $actions) {
          $acl->addComponent(new Component($name), $actions);

@@ -54,3 +54,9 @@ Screenshots show RingQ's own settings screens with sample data.
 | A test contact in the CRM with your phone number | Part D |
 
 Technical details for all three (files, tables, cron, access rules): [CRM_INTEGRATIONS.md](../CRM_INTEGRATIONS.md).
+
+## Micro apps
+
+| App | Setup guide | Technical |
+|---|---|---|
+| **WhatsApp calling** (Meta SIP) | [WHATSAPP_SETUP.md](WHATSAPP_SETUP.md) — where to get the Meta access token, Phone number ID and other credentials | [whatsapp/TECHNICAL.md](../whatsapp/TECHNICAL.md) |
