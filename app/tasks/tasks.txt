@@ -1,0 +1,63 @@
+# --- 1 Minute Interval ---
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main main2
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main main3 
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main main4 
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main main7
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main main8
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main main14
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main main15
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main verifyRegister
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main meetToken
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main processScheduledReports
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main meetingScheduleEmail
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main outboundParallel
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main concurrency
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main system
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main webinarReminders
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main getPatients
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php main hotelWakeupCalls
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php aiVoice calls
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php qontak sync
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php hubspotcrm sync
+*/1 * * * * /usr/bin/php /var/www/ringq/app/cli.php freshdeskcrm sync
+
+# --- Bash execution ---
+*/1 * * * * /bin/bash /var/www/ringq/app/scripts/jobs.sh >/dev/null 2>&1
+*/1 * * * * /bin/bash /var/www/ringq/app/scripts/sipguard.sh >/dev/null 2>&1
+
+# --- Sub-Minute Tasks (System Monitoring) ---
+*/1 * * * * sleep 10; /usr/bin/php /var/www/ringq/app/cli.php main system
+*/1 * * * * sleep 20; /usr/bin/php /var/www/ringq/app/cli.php main system
+*/1 * * * * sleep 30; /usr/bin/php /var/www/ringq/app/cli.php main system
+*/1 * * * * sleep 40; /usr/bin/php /var/www/ringq/app/cli.php main system
+*/1 * * * * sleep 50; /usr/bin/php /var/www/ringq/app/cli.php main system
+
+# --- Hourly ---
+0 * * * * /usr/bin/php /var/www/ringq/app/cli.php main salesforceToken
+
+# --- Every 6 Hours ---
+0 */6 * * * /usr/bin/php /var/www/ringq/app/cli.php main autosipguard
+
+# --- Daily ---
+0 0 * * * /usr/bin/php /var/www/ringq/app/cli.php main scheduledMeetsToken
+0 0 * * * /usr/bin/php /var/www/ringq/app/cli.php main checkCerts
+0 0 * * * /usr/bin/php /var/www/ringq/app/cli.php main autoupdate
+0 0 * * * /usr/bin/php /var/www/ringq/app/cli.php main storageRetention
+0 0 * * * /root/.nvm/versions/node/v14.21.3/bin/pm2 update all
+0 0 * * * truncate -s 0 /var/log/freeswitch/.log
+0 0 * * * truncate -s 0 /root/.pm2/logs/*log
+0 2 * * * find /var/spool/pcapsipdump -type f -mtime +30 -delete
+
+# --- Reboot ---
+@reboot iptables -I INPUT 1 -p tcp --dport 7443 -j ACCEPT
+@reboot iptables -I INPUT 1 -p tcp --dport 8443 -j ACCEPT
+@reboot iptables -I INPUT 1 -p tcp --dport 8445 -j ACCEPT
+@reboot iptables -I INPUT 1 -p tcp --dport 8886 -j ACCEPT
+@reboot iptables -I INPUT 1 -p tcp --dport 9443 -j ACCEPT
+@reboot iptables -I INPUT 1 -p tcp --dport 9998 -j ACCEPT
+@reboot iptables -I INPUT 1 -p tcp --dport 9999 -j ACCEPT
+@reboot sleep 200 && /bin/bash /var/www/ringq/app/scripts/startup.sh >/dev/null 2>&1
+
+# --- Qontak CRM (nightly cleanup) ---
+15 3 * * * /usr/bin/php /var/www/ringq/app/cli.php qontak prune
