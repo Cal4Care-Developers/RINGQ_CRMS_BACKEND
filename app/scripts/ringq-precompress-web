@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+web_root="${1:-/var/www/webapp}"
+case "$web_root" in
+    /*) ;;
+    *) echo "Web root must be an absolute path." >&2; exit 64 ;;
+esac
+case "$web_root" in
+    /|/var|/var/www) echo "Refusing broad web root: $web_root" >&2; exit 64 ;;
+esac
+[ -d "$web_root" ] || { echo "Web root does not exist: $web_root" >&2; exit 66; }
+
+compressed_count=0
+while IFS= read -r -d '' source_file; do
+    compressed_file="${source_file}.gz"
+    if [ ! -f "$compressed_file" ] || \
+       [ "$source_file" -nt "$compressed_file" ] || \
+       ! gzip -cd -- "$compressed_file" 2>/dev/null | cmp -s -- "$source_file" -; then
+        temporary_file="${compressed_file}.tmp.$$"
+        gzip -9 -c -- "$source_file" > "$temporary_file"
+        chmod 0644 "$temporary_file"
+        mv -f -- "$temporary_file" "$compressed_file"
+        compressed_count=$((compressed_count + 1))
+    fi
+done < <(
+    find "$web_root" -type f \
+        \( -name '*.js' -o -name '*.json' -o -name '*.css' -o \
+           -name '*.wasm' -o -name '*.svg' \) \
+        -size +1024c -print0
+)
+
+pruned_count=0
+while IFS= read -r -d '' compressed_file; do
+    source_file="${compressed_file%.gz}"
+    if [ ! -f "$source_file" ]; then
+        rm -f -- "$compressed_file"
+        pruned_count=$((pruned_count + 1))
+    fi
+done < <(find "$web_root" -type f -name '*.gz' -print0)
+
+while IFS= read -r -d '' compressed_file; do
+    source_file="${compressed_file%.gz}"
+    gzip -cd -- "$compressed_file" 2>/dev/null | cmp -s -- "$source_file" - || {
+        echo "Compressed asset verification failed: $compressed_file" >&2
+        exit 1
+    }
+done < <(find "$web_root" -type f -name '*.gz' -print0)
+
+printf 'Pre-compressed %d changed assets; pruned %d orphaned assets.\n' \
+    "$compressed_count" "$pruned_count"

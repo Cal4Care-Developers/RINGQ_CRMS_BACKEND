@@ -1,0 +1,6 @@
+<extension name="ringq-call-control" continue="true" uuid="e2dc2aa5-3d68-4a46-b17d-c0085da71330">
+    <!-- [ringq-call-control] apply the extension's Call Control settings for its current call profile -->
+    <condition field="${user_exists}" expression="^true$">
+        <action application="set" data="rq_cc=${lua(ringq_call_control.lua resolve ${uuid})}" inline="true"/>
+    </condition>
+</extension>

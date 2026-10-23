@@ -1,0 +1,9 @@
+<extension name="ringq-trunk-media-timeout" continue="true" uuid="c0d47518-70a7-4cbe-b71c-224f576fa7cd">
+    <!-- [trunk-media-timeout] outbound calls from an extension to the trunk: if the carrier stops
+         sending audio for 10 s (the far end hung up but the carrier's BYE is late), end the call.
+         Applies only to the trunk leg (nolocal:), not to the extension's own leg. -->
+    <condition field="${from_user_exists}" expression="^true$"/>
+    <condition field="${user_exists}" expression="^false$">
+        <action application="export" data="nolocal:media_timeout=10000" inline="true"/>
+    </condition>
+</extension>

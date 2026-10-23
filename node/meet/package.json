@@ -1,0 +1,23 @@
+{
+  "name": "@ringq/meet-control-plane",
+  "version": "1.0.0-tenant.49",
+  "private": true,
+  "description": "Tenant-local RingQ Meet v1 control plane",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js",
+    "test": "node tests/run.js && node tests/api.js && node tests/durable.js && node tests/collaboration.js && node tests/capture.js && node tests/production.js"
+  },
+  "dependencies": {
+    "axios": "1.18.1",
+    "busboy": "1.6.0",
+    "dotenv": "17.4.2",
+    "pg": "8.22.0",
+    "redis": "6.1.0"
+  }
+}

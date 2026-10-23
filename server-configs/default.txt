@@ -1,0 +1,441 @@
+# >>> ringq-security: cors allow-list >>>
+# The API answers with credentials, so it may only echo an Origin on the
+# host it is being called on (any port). Every other Origin gets no
+# Access-Control-Allow-Origin header at all. /ringqtalk/config/ is the one
+# exception: button.js reads it from customer websites without
+# credentials, and it returns only public button styling.
+map "$request_uri|$http_origin|$host" $ringq_cors_origin {
+    default "";
+    "~^/ringqtalk/config/[^|]*\|(https?://[^|]+)\|" $1;
+    "~*^[^|]*\|(https://([^/:|]+)(:[0-9]+)?)\|\2$" $1;
+}
+# <<< ringq-security: cors allow-list <<<
+# >>> ringq-security: admin tools >>>
+# phpinfo pages answer 404 to everybody; adminer.php only to the allowed
+# address. Checked at server level, before any location runs PHP.
+map "$uri|$remote_addr" $ringq_block_tools {
+    default 0;
+    "~*^/(chat_file_upload|avr|temp|files|fb_[a-z]+|wp_[a-z_]+|audio|voice|passes|img|meet_chat|did_number_csv|extension_csv|outbound_rules_csv|trunk_csv)/.*\.(php[0-9]*|phtml|phar)" 1;
+    "~^/(info|phpinfo)\.php" 1;
+    "~^/adminer\.php[^|]*\|111\.223\.127\.170$" 0;
+    "~^/adminer\.php" 1;
+}
+# <<< ringq-security: admin tools <<<
+# >>> ringq-security: headers >>>
+# Uploads that are not images or PDFs download instead of rendering on the
+# app's origin. The app itself refuses to be framed and reports CSP
+# violations; public pages that customer sites embed are left alone.
+map $uri $ringq_upload_disposition {
+    default "";
+    "~*^/(chat_file_upload|avr|temp|files|fb_[a-z]+|wp_[a-z_]+|audio|voice|passes|img|meet_chat|did_number_csv|extension_csv|outbound_rules_csv|trunk_csv)/.*\.(jpe?g|png|gif|webp|bmp|ico|pdf)$" "";
+    "~*^/(chat_file_upload|avr|temp|files|fb_[a-z]+|wp_[a-z_]+|audio|voice|passes|img|meet_chat|did_number_csv|extension_csv|outbound_rules_csv|trunk_csv)/" attachment;
+}
+map $uri $ringq_frame_options {
+    default "";
+    "~^/(cloudapp[^/]*|license)(/|$)" DENY;
+}
+map $uri $ringq_csp_report_only {
+    default "";
+    "~^/cloudapp[^/]*(/|$)" "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://www.gstatic.com https://unpkg.com https://code.jquery.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; connect-src 'self' https://$host:* wss://$host:* https://*.ringq.ai wss://*.ringq.ai https://www.ringq.com https://www.gstatic.com https://fonts.gstatic.com; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; report-uri https://$host:8443/login/cspreport";
+}
+# <<< ringq-security: headers <<<
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
+upstream socket {
+    server unix:/var/run/php/php7.4-fpm.sock;
+    keepalive 150;
+}
+
+upstream websocket {
+    server 127.0.0.1:3000;
+    keepalive 150;
+}
+
+upstream websocket3 {
+    server 127.0.0.1:4060;
+    keepalive 150;
+}
+
+upstream websocket4 {
+    server 127.0.0.1:4050;
+    keepalive 150;
+}
+
+# === nginx cache retrofit: file-descriptor cache (http context) ===
+open_file_cache            max=10000 inactive=60s;
+open_file_cache_valid      60s;
+open_file_cache_min_uses   2;
+open_file_cache_errors     on;
+# === end nginx cache retrofit ===
+
+server {
+    if ($ringq_block_tools) { return 404; }
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+    add_header Content-Disposition $ringq_upload_disposition always;
+    add_header X-Frame-Options DENY always;
+    listen 8443 ssl http2;
+	listen [::]:8443 ssl http2;
+	server_name ringq;
+	ssl_certificate /etc/letsencrypt/live/ssl.ringq.ai/fullchain.pem;
+	ssl_certificate_key /etc/letsencrypt/live/ssl.ringq.ai/privkey.pem;
+	ssl_protocols	        TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
+	ssl_prefer_server_ciphers on;
+	ssl_ciphers             ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-SHA:AES256-SHA;
+	ssl_session_cache       shared:SSL:40m;
+	ssl_session_timeout     2h;
+	ssl_session_tickets     off;
+
+    root /var/www/ringq/public;
+    index index.php index.html;
+
+    add_header Access-Control-Allow-Origin $ringq_cors_origin always;
+    add_header Access-Control-Allow-Credentials true always;
+    add_header Access-Control-Allow-Headers 'authorization, access-control-allow-origin, cookie, content-type';
+
+    sendfile on;
+    client_max_body_size    0;
+    client_body_buffer_size 128k;
+
+    fastcgi_connect_timeout 600;
+    fastcgi_send_timeout 600;
+    fastcgi_read_timeout 3600;
+
+    fastcgi_buffering on;
+    fastcgi_buffer_size 128k;
+    fastcgi_buffers 4 256k;
+    fastcgi_busy_buffers_size 256k;
+    #fastcgi_max_temp_file_size 2048m;
+    #fastcgi_temp_file_write_size 2048m;
+    #fastcgi_temp_path /etc/nginx/proxy_temp;
+
+    fastcgi_keep_conn on;
+    fastcgi_socket_keepalive on;
+
+    location ~* \.(?:css|js|mjs|wasm|map|jpe?g|gif|png|webp|svg|svgz|ico|cur|bmp|tiff?|mp4|webm|ogv|ogg|wav|mp3|flac|aac|m4a|woff2?|eot|ttf|otf|htc|gz|rss|atom|xml|pdf|txt)$ {
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        add_header Content-Disposition $ringq_upload_disposition always;
+        add_header X-Frame-Options DENY always;
+        expires        7d;
+        add_header     Cache-Control "public" always;
+        add_header     Access-Control-Allow-Origin      $ringq_cors_origin always;
+        add_header     Access-Control-Allow-Credentials true always;
+        add_header     Access-Control-Allow-Headers     'authorization, access-control-allow-origin, cookie, content-type' always;
+        gzip_static    on;
+        access_log     off;
+        log_not_found  off;
+    }
+
+    # [turn] TURN relay credentials for signed-in apps (node/turnCredentials.js)
+    location = /api/turn {
+        proxy_pass http://127.0.0.1:6097;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 15s;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.php?_url=$uri&$args;
+    }
+
+    location ~ [^/]\.php(/|$) {
+        fastcgi_pass socket;
+        fastcgi_index /index.php;
+
+        include fastcgi_params;
+        fastcgi_split_path_info ^(.+?\.php)(/.*)$;
+        if (!-f $document_root$fastcgi_script_name) {
+            return 404;
+        }
+        
+        fastcgi_param PATH_INFO       $fastcgi_path_info;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    }
+
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header HTTPS "on";
+    proxy_set_header X-Real-IP  $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header Host $host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_connect_timeout 45;
+    proxy_send_timeout 45;
+    proxy_read_timeout 36000s;
+    proxy_buffering off;
+    proxy_buffer_size 4k;
+    proxy_buffers 4 32k;
+    proxy_busy_buffers_size 64k;
+    #proxy_max_temp_file_size 2048m;
+    #proxy_temp_file_write_size 64k;
+    #proxy_temp_path /etc/nginx/proxy_temp;
+    
+    location /img { location ~ \.php$ {return 403;} }	
+    # Avatars: every upload gets a new filename, so a year-long immutable
+    # cache is safe and a refresh needs no revalidation. ^~ keeps this ahead
+    # of the regex static-file block. add_header here replaces the server's,
+    # so the CORS headers Flutter web needs to fetch the image are repeated.
+    location ^~ /avr/ {
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        add_header Content-Disposition $ringq_upload_disposition always;
+        add_header X-Frame-Options DENY always;
+        location ~ \.php$ { return 403; }
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header Access-Control-Allow-Origin $ringq_cors_origin always;
+        add_header Access-Control-Allow-Credentials true always;
+        add_header Access-Control-Allow-Headers 'authorization, access-control-allow-origin, cookie, content-type' always;
+        access_log off;
+    }
+    location /avr { location ~ \.php$ {return 403;} }
+    location /fbk { location ~ \.php$ {return 403;} }
+    location /temp { location ~ \.php$ {return 403;} }
+    location /audio { location ~ \.php$ {return 403;} }
+
+    location = /favicon.ico { access_log off; log_not_found off; }
+    location = /robots.txt { access_log off; log_not_found off; }
+    location ~ /\.ht { deny all; access_log off; log_not_found off; }
+}
+
+server {
+    if ($ringq_block_tools) { return 404; }
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+    add_header Content-Disposition $ringq_upload_disposition always;
+    add_header X-Frame-Options DENY always;
+    listen 8886 ssl http2;
+    listen [::]:8886 ssl http2;
+	ssl_certificate /etc/letsencrypt/live/ssl.ringq.ai/fullchain.pem;
+	ssl_certificate_key /etc/letsencrypt/live/ssl.ringq.ai/privkey.pem;
+	ssl_protocols	        TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
+	ssl_prefer_server_ciphers on;
+	ssl_ciphers             ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-SHA:AES256-SHA;
+	ssl_session_cache       shared:SSL:40m;
+	ssl_session_timeout     2h;
+	ssl_session_tickets     off;
+
+    root /var/www/ringq/public;
+    index index.php;
+    charset utf-8;
+    server_name rinq;
+
+    client_max_body_size 0;
+    client_body_buffer_size 128k;
+
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header HTTPS "on";
+    proxy_set_header X-Real-IP  $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header Host $host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_connect_timeout 45;
+    proxy_send_timeout 45;
+    proxy_read_timeout 36000s;
+    proxy_buffering off;
+    proxy_buffer_size 4k;
+    proxy_buffers 4 32k;
+    proxy_busy_buffers_size 64k;
+    #proxy_max_temp_file_size 2048m;
+    #proxy_temp_file_write_size 64k;
+    #proxy_temp_path /etc/nginx/proxy_temp;
+
+    location ~* \.(?:css|js|mjs|wasm|map|jpe?g|gif|png|webp|svg|svgz|ico|cur|bmp|tiff?|mp4|webm|ogv|ogg|wav|mp3|flac|aac|m4a|woff2?|eot|ttf|otf|htc|gz|rss|atom|xml|pdf|txt)$ {
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        add_header Content-Disposition $ringq_upload_disposition always;
+        add_header X-Frame-Options DENY always;
+        expires        7d;
+        add_header     Cache-Control "public" always;
+        gzip_static    on;
+        access_log     off;
+        log_not_found  off;
+    }
+
+    location / {
+        try_files $uri $uri/ @socket;
+    }
+
+    location @socket {
+        proxy_pass http://websocket4;
+    }
+
+    location ~ \.php {
+        return 403;
+    }
+
+    location = /favicon.ico { access_log off; log_not_found off; }
+    location = /robots.txt { access_log off; log_not_found off; }
+    location ~ /\.ht { deny all; access_log off; log_not_found off; }
+}
+
+server {
+    if ($ringq_block_tools) { return 404; }
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+    add_header Content-Disposition $ringq_upload_disposition always;
+    add_header X-Frame-Options DENY always;
+    listen 9443 ssl http2;
+    listen [::]:9443 ssl http2;
+	ssl_certificate /etc/letsencrypt/live/ssl.ringq.ai/fullchain.pem;
+	ssl_certificate_key /etc/letsencrypt/live/ssl.ringq.ai/privkey.pem;
+	ssl_protocols	        TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
+	ssl_prefer_server_ciphers on;
+	ssl_ciphers             ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-SHA:AES256-SHA;
+	ssl_session_cache       shared:SSL:40m;
+	ssl_session_timeout     2h;
+	ssl_session_tickets     off;
+
+    root /var/www/ringq/public;
+    index index.php;
+    charset utf-8;
+    server_name rinq;
+
+    client_max_body_size 0;
+    client_body_buffer_size 128k;
+
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header HTTPS "on";
+    proxy_set_header X-Real-IP  $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header Host $host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_connect_timeout 45;
+    proxy_send_timeout 45;
+    proxy_read_timeout 36000s;
+    proxy_buffering off;
+    proxy_buffer_size 4k;
+    proxy_buffers 4 32k;
+    proxy_busy_buffers_size 64k;
+    #proxy_max_temp_file_size 2048m;
+    #proxy_temp_file_write_size 64k;
+    #proxy_temp_path /etc/nginx/proxy_temp;
+
+    location ~* \.(?:css|js|mjs|wasm|map|jpe?g|gif|png|webp|svg|svgz|ico|cur|bmp|tiff?|mp4|webm|ogv|ogg|wav|mp3|flac|aac|m4a|woff2?|eot|ttf|otf|htc|gz|rss|atom|xml|pdf|txt)$ {
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        add_header Content-Disposition $ringq_upload_disposition always;
+        add_header X-Frame-Options DENY always;
+        expires        7d;
+        add_header     Cache-Control "public" always;
+        gzip_static    on;
+        access_log     off;
+        log_not_found  off;
+    }
+
+    location / {
+        try_files $uri $uri/ @socket;
+    }
+
+    location @socket {
+        proxy_pass http://websocket;
+    }
+
+    location ~ \.php {
+        return 403;
+    }
+
+    location = /favicon.ico { access_log off; log_not_found off; }
+    location = /robots.txt { access_log off; log_not_found off; }
+    location ~ /\.ht { deny all; access_log off; log_not_found off; }
+}
+
+server {
+    if ($ringq_block_tools) { return 404; }
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+    add_header Content-Disposition $ringq_upload_disposition always;
+    add_header X-Frame-Options DENY always;
+    listen 9999 ssl http2;
+    listen [::]:9999 ssl http2;
+    ssl_certificate /etc/letsencrypt/live/ssl.ringq.ai/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ssl.ringq.ai/privkey.pem;
+    ssl_protocols           TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers             ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-SHA:AES256-SHA;
+    ssl_session_cache       shared:SSL:40m;
+    ssl_session_timeout     2h;
+    ssl_session_tickets     off;
+
+    root /var/www/ringq/public;
+    index index.php;
+    charset utf-8;
+    server_name ringc;
+
+    client_max_body_size 0;
+    client_body_buffer_size 128k;
+
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header HTTPS "on";
+    proxy_set_header X-Real-IP  $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header Host $host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_connect_timeout 45;
+    proxy_send_timeout 45;
+    proxy_read_timeout 36000s;
+    proxy_buffering off;
+    proxy_buffer_size 4k;
+    proxy_buffers 4 32k;
+    proxy_busy_buffers_size 64k;
+    #proxy_max_temp_file_size 2048m;
+    #proxy_temp_file_write_size 64k;
+    #proxy_temp_path /etc/nginx/proxy_temp;
+
+    location ~* \.(?:css|js|mjs|wasm|map|jpe?g|gif|png|webp|svg|svgz|ico|cur|bmp|tiff?|mp4|webm|ogv|ogg|wav|mp3|flac|aac|m4a|woff2?|eot|ttf|otf|htc|gz|rss|atom|xml|pdf|txt)$ {
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        add_header Content-Disposition $ringq_upload_disposition always;
+        add_header X-Frame-Options DENY always;
+        expires        7d;
+        add_header     Cache-Control "public" always;
+        gzip_static    on;
+        access_log     off;
+        log_not_found  off;
+    }
+
+    location / {
+        try_files $uri $uri/ @socket;
+    }
+
+    location @socket {
+        proxy_pass http://websocket3;
+    }
+
+    location ~ \.php {
+        return 403;
+    }
+
+    location = /favicon.ico { access_log off; log_not_found off; }
+    location = /robots.txt { access_log off; log_not_found off; }
+    location ~ /\.ht { deny all; access_log off; log_not_found off; }
+}

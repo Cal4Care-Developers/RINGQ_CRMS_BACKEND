@@ -1,0 +1,59 @@
+# Node / npm related (any package directory, at any depth)
+**/node_modules/
+**/.npm/
+**/.yarn/cache/
+**/.yarn/install-state.gz
+**/.pnpm-store/
+**/npm-debug.log*
+**/yarn-error.log*
+**/pnpm-debug.log*
+**/.node_repl_history
+
+# Node build output
+**/dist/
+**/.next/
+**/.nuxt/
+**/coverage/
+**/.nyc_output/
+
+# PHP / Composer
+**/vendor/
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Credentials / certs
+certs/
+server-configs/ssl.ringq.ai/
+app/licensing/*
+*.pem
+*.key
+*.cer
+*.p12
+ringq-public-*.json
+
+# Database dumps (too large for git; keep out of the repo)
+# *.sql
+*.sql.zip
+*.sql.gz
+*.dump
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+*.p8
+
+# Firebase service account key for Android pushes: shipped by hand in the sandbox payload
+# (node/fcm-service-account.json), installed by app/scripts/ring-push/ringq-push-setup.sh. Never commit it.
+node/fcm-service-account.json
+# The Apple (APNs) push key ships the same way, as node/apns-AuthKey_<KEYID>.p8. Never commit it.
+node/apns-AuthKey_*.p8
+*firebase-adminsdk*.json
+__pycache__/
+*.pyc

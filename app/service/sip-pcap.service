@@ -1,0 +1,20 @@
+; Author: Mohammed Rashid <mr@cal4care.com>
+; systemctl daemon-reload
+; systemctl enable sip-pcap
+; systemctl start sip-pcap
+
+
+[Unit]
+Description=SIP PCAP capture daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sip-pcap-daemon.sh
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

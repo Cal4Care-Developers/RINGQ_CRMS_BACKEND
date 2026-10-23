@@ -1,0 +1,6 @@
+[Unit]
+Description=Run Call Detail Record PHP Script
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/php /var/www/ringq/app/cli.php main calldetailrecord

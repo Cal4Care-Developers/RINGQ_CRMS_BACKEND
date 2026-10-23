@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<document type="freeswitch/xml">
+	<section name="configuration">
+		<configuration name="sofia.conf" description="sofia Endpoint">
+			<global_settings>
+				<param name="auto-restart" value="true"/>
+				<param name="capture-server" value="udp:127.0.0.1:9060"/>
+				<param name="inbound-reg-in-new-thread" value="true"/>
+				<param name="log-level" value="0"/>
+				<param name="max-reg-threads" value="8"/>
+			</global_settings>
+			<profiles>
+				<profile name="external">
+					<aliases>
+					</aliases>
+					<gateways>
+					</gateways>
+					<domains>
+						<!-- indicator to parse the directory for domains with parse="true" to get gateways-->
+						<!--<domain name="$${domain}" parse="true"/>-->
+						<!-- indicator to parse the directory for domains with parse="true" to get gateways and alias every domain to this profile -->
+						<!--<domain name="all" alias="true" parse="true"/>-->
+						<domain name="all" alias="false" parse="false"/>
+					</domains>
+					<settings>
+						<param name="media_hold_timeout" value="1800"/>
+						<param name="media_timeout" value="300"/>
+						<param name="nonce-ttl" value="60"/>
+						<param name="rfc2833-pt" value="101"/>
+						<param name="rtp-ip" value="server_local_ip"/>
+						<param name="rtp-timer-name" value="soft"/>
+						<param name="session-timeout" value="0"/>
+						<param name="sip-capture" value="no"/>
+						<param name="sip-ip" value="server_local_ip"/>
+						<param name="outbound-codec-prefs" value="PCMU,PCMA"/>
+						<param name="inbound-codec-prefs" value="G7221@32000h,G7221@16000h,G722,PCMU,PCMA"/>
+						<param name="inbound-codec-negotiation" value="generous"/>
+						<param name="inbound-zrtp-passthru" value="false"/>
+						<param name="inbound-late-negotiation" value="false"/>
+						<param name="zrtp-passthru" value="true"/>
+						<param name="user-agent-string" value="RingQ"/>
+						<param name="track-calls" value="false"/>
+						<param name="tls-version" value="tlsv1,tlsv1.1,tlsv1.2"/>
+						<param name="tls-verify-policy" value="none"/>
+						<param name="tls-verify-in-subjects" value=""/>
+						<param name="tls-verify-depth" value="2"/>
+						<param name="tls-verify-date" value="false"/>
+						<param name="tls-sip-port" value="5081"/>
+						<param name="tls-passphrase" value=""/>
+						<param name="tls-only" value="false"/>
+						<param name="tls-cert-dir" value="/etc/freeswitch/tls"/>
+						<param name="tls-bind-params" value="transport=tls"/>
+						<param name="tls" value="false"/>
+						<param name="suppress-cng" value="true"/>
+						<param name="sip-trace" value="no"/>
+						<param name="sip-port" value="5080"/>
+						<param name="apply-inbound-acl" value="providers"/>
+						<param name="apply-nat-acl" value="nat.auto"/>
+						<param name="auth-calls" value="true"/>
+						<param name="auth-subscriptions" value="true"/>
+						<param name="context" value="public"/>
+						<param name="debug" value="0"/>
+						<param name="dialplan" value="XML"/>
+						<param name="dtmf-duration" value="2000"/>
+						<param name="dtmf-type" value="rfc2833"/>
+						<param name="enable-timer" value="false"/>
+						<param name="ext-rtp-ip" value="server_public_ip"/>
+						<param name="ext-sip-ip" value="server_public_ip"/>
+						<param name="hold-music" value="local_stream://default"/>
+						<param name="local-network-acl" value="localnet.auto"/>
+						<param name="manage-presence" value="false"/>
+					</settings>
+				</profile>
+				<profile name="external-ipv6">
+					<aliases>
+					</aliases>
+					<gateways>
+					</gateways>
+					<domains>
+						<!-- indicator to parse the directory for domains with parse="true" to get gateways-->
+						<!--<domain name="$${domain}" parse="true"/>-->
+						<!-- indicator to parse the directory for domains with parse="true" to get gateways and alias every domain to this profile -->
+						<!--<domain name="all" alias="true" parse="true"/>-->
+						<domain name="all" alias="false" parse="true"/>
+					</domains>
+					<settings>
+						<param name="apply-inbound-acl" value="providers"/>
+						<param name="auth-all-packets" value="false"/>
+						<param name="auth-all-packets" value="false"/>
+						<param name="auth-calls" value="true"/>
+						<param name="auth-subscriptions" value="true"/>
+						<param name="context" value="public"/>
+						<param name="debug" value="0"/>
+						<param name="dialplan" value="XML"/>
+						<param name="dtmf-duration" value="2000"/>
+						<param name="dtmf-type" value="rfc2833"/>
+						<param name="enable-timer" value="false"/>
+						<param name="hold-music" value="local_stream://default"/>
+						<param name="local-network-acl" value="localnet.auto"/>
+						<param name="manage-presence" value="false"/>
+						<param name="media_hold_timeout" value="1800"/>
+						<param name="media_timeout" value="300"/>
+						<param name="nonce-ttl" value="60"/>
+						<param name="rfc2833-pt" value="101"/>
+						<param name="rtp-ip" value="::1"/>
+						<param name="rtp-timer-name" value="soft"/>
+						<param name="session-timeout" value="0"/>
+						<param name="sip-capture" value="no"/>
+						<param name="sip-ip" value="::1"/>
+						<param name="sip-port" value="5080"/>
+						<param name="sip-trace" value="no"/>
+						<param name="tls" value="false"/>
+						<param name="tls-bind-params" value="transport=tls"/>
+						<param name="tls-cert-dir" value="/etc/freeswitch/tls"/>
+						<param name="tls-only" value="false"/>
+						<param name="tls-passphrase" value=""/>
+						<param name="tls-sip-port" value="5081"/>
+						<param name="tls-verify-date" value="false"/>
+						<param name="tls-verify-depth" value="2"/>
+						<param name="tls-verify-in-subjects" value=""/>
+						<param name="tls-verify-policy" value="none"/>
+						<param name="tls-version" value="tlsv1,tlsv1.1,tlsv1.2"/>
+						<param name="track-calls" value="false"/>
+						<param name="user-agent-string" value="RingQ"/>
+						<param name="zrtp-passthru" value="true"/>
+						<param name="inbound-codec-negotiation" value="generous"/>
+						<param name="inbound-late-negotiation" value="false"/>
+						<param name="inbound-zrtp-passthru" value="false"/>
+						<param name="inbound-codec-prefs" value="G7221@32000h,G7221@16000h,G722,PCMU,PCMA"/>
+						<param name="outbound-codec-prefs" value="PCMU,PCMA"/>
+					</settings>
+				</profile>
+				<profile name="internal">
+					<aliases>
+					</aliases>
+					<gateways>
+					</gateways>
+					<domains>
+						<!-- indicator to parse the directory for domains with parse="true" to get gateways-->
+						<!--<domain name="$${domain}" parse="true"/>-->
+						<!-- indicator to parse the directory for domains with parse="true" to get gateways and alias every domain to this profile -->
+						<!--<domain name="all" alias="true" parse="true"/>-->
+						<domain name="all" alias="false" parse="false"/>
+					</domains>
+					<settings>
+						<param name="tls-passphrase" value=""/>
+						<param name="tls-verify-date" value="false"/>
+						<param name="tls-verify-depth" value="2"/>
+						<param name="tls-verify-in-subjects" value=""/>
+						<param name="tls-verify-policy" value="none"/>
+						<param name="tls-version" value="tlsv1,tlsv1.1,tlsv1.2"/>
+						<param name="track-calls" value="false"/>
+						<param name="user-agent-string" value="RingQ"/>
+						<param name="watchdog-enabled" value="no"/>
+						<param name="watchdog-event-timeout" value="30000"/>
+						<param name="watchdog-step-timeout" value="30000"/>
+						<param name="ws-binding" value=":5066"/>
+						<param name="wss-binding" value=":7443"/>
+						<param name="auth-calls" value="true"/>
+						<param name="auth-subscriptions" value="true"/>
+						<param name="challenge-realm" value="auto_to"/>
+						<param name="context" value="public"/>
+						<param name="debug" value="0"/>
+						<param name="dialplan" value="XML"/>
+						<param name="dtmf-duration" value="2000"/>
+						<param name="dtmf-type" value="rfc2833"/>
+						<param name="enable-timer" value="false"/>
+						<param name="ext-rtp-ip" value="server_public_ip"/>
+						<param name="ext-sip-ip" value="server_public_ip"/>
+						<param name="forward-unsolicited-mwi-notify" value="false"/>
+						<param name="hold-music" value="local_stream://default"/>
+						<param name="inbound-reg-force-matching-username" value="true"/>
+						<param name="local-network-acl" value="localnet.auto"/>
+						<param name="log-auth-failures" value="false"/>
+						<param name="manage-presence" value="true"/>
+						<param name="manage-shared-appearance" value="true"/>
+						<param name="media_hold_timeout" value="1800"/>
+						<param name="media_timeout" value="300"/>
+						<param name="nonce-ttl" value="60"/>
+						<param name="presence-hosts" value="{domain},server_local_ip"/>
+						<param name="presence-privacy" value="{presence_privacy}"/>
+						<param name="presence-probe-on-register" value="true"/>
+						<param name="record-path" value="/var/lib/freeswitch/recordings"/>
+						<param name="record-template" value="${domain_name}/archive/${strftime(%Y)}/${strftime(%b)}/${strftime(%d)}/${uuid}.${record_ext}"/>
+						<param name="rfc2833-pt" value="101"/>
+						<param name="inbound-late-negotiation" value="false"/>
+						<param name="inbound-zrtp-passthru" value="false"/>
+						<param name="rtp-ip" value="server_local_ip"/>
+						<param name="rtp-timer-name" value="soft"/>
+						<param name="sip-capture" value="no"/>
+						<param name="sip-ip" value="server_local_ip"/>
+						<param name="sip-port" value="5060"/>
+						<param name="sip-trace" value="no"/>
+						<param name="tls" value="false"/>
+						<param name="tls-bind-params" value="transport=tls"/>
+						<param name="tls-cert-dir" value="/etc/freeswitch/tls"/>
+						<param name="tls-only" value="false"/>
+						<param name="tls-sip-port" value="5061"/>
+						<param name="inbound-codec-prefs" value="G7221@32000h,G7221@16000h,G722,PCMU,PCMA"/>
+						<param name="inbound-codec-negotiation" value="generous"/>
+						<param name="outbound-codec-prefs" value="G7221@32000h,G7221@16000h,G722,PCMU,PCMA"/>
+						<param name="NDLB-force-rport" value="safe"/>
+						<param name="aggressive-nat-detection" value="true"/>
+						<param name="apply-inbound-acl" value="providers"/>
+						<param name="apply-nat-acl" value="nat.auto"/>
+						<param name="auth-all-packets" value="false"/>
+					</settings>
+				</profile>
+				<profile name="internal-ipv6">
+					<aliases>
+					</aliases>
+					<gateways>
+					</gateways>
+					<domains>
+						<!-- indicator to parse the directory for domains with parse="true" to get gateways-->
+						<!--<domain name="$${domain}" parse="true"/>-->
+						<!-- indicator to parse the directory for domains with parse="true" to get gateways and alias every domain to this profile -->
+						<!--<domain name="all" alias="true" parse="true"/>-->
+						<domain name="all" alias="false" parse="false"/>
+					</domains>
+					<settings>
+						<param name="inbound-codec-prefs" value="G7221@32000h,G7221@16000h,G722,PCMU,PCMA"/>
+						<param name="inbound-codec-negotiation" value="generous"/>
+						<param name="debug" value="0"/>
+						<param name="sip-port" value="5060"/>
+						<param name="sip-ip" value="::1"/>
+						<param name="apply-inbound-acl" value="providers"/>
+						<param name="session-timeout" value="0"/>
+						<param name="media_hold_timeout" value="1800"/>
+						<param name="media_timeout" value="300"/>
+						<param name="nonce-ttl" value="60"/>
+						<param name="context" value="public"/>
+						<param name="outbound-codec-prefs" value="G7221@32000h,G7221@16000h,G722,PCMU,PCMA"/>
+						<param name="tls" value="false"/>
+						<param name="tls-bind-params" value="transport=tls"/>
+						<param name="tls-cert-dir" value="/etc/freeswitch/tls"/>
+						<param name="tls-only" value="false"/>
+						<param name="tls-passphrase" value=""/>
+						<param name="tls-sip-port" value="5061"/>
+						<param name="tls-verify-date" value="false"/>
+						<param name="tls-verify-depth" value="2"/>
+						<param name="tls-verify-in-subjects" value=""/>
+						<param name="tls-verify-policy" value="none"/>
+						<param name="tls-version" value="tlsv1,tlsv1.1,tlsv1.2"/>
+						<param name="track-calls" value="false"/>
+						<param name="rtp-timer-name" value="soft"/>
+						<param name="rtp-ip" value="::1"/>
+						<param name="rfc2833-pt" value="101"/>
+						<param name="record-template" value="/var/lib/freeswitch/recordings/{caller_id_number}.${strftime(%Y-%m-%d-%H-%M-%S)}.${record_ext}"/>
+						<param name="manage-presence" value="true"/>
+						<param name="hold-music" value="local_stream://default"/>
+						<param name="enable-timer" value="false"/>
+						<param name="dtmf-type" value="rfc2833"/>
+						<param name="dtmf-duration" value="2000"/>
+						<param name="dialplan" value="XML"/>
+						<param name="auth-subscriptions" value="true"/>
+						<param name="auth-calls" value="true"/>
+						<param name="auth-all-packets" value="false"/>
+						<param name="user-agent-string" value="RingQ"/>
+						<param name="use-rtp-timer" value="true"/>
+						<param name="sip-trace" value="no"/>
+					</settings>
+				</profile>
+			</profiles>
+		</configuration>
+	</section>
+</document>

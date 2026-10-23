@@ -1,0 +1,1060 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+# Idempotent RingQ Meet tenant installer and updater.
+#
+# Customer installations contain only the web client, PHP bridge, and tenant
+# control plane. The gateway and LiveKit pool are central services. Every path
+# is overridable so the shell test suite can run without touching the host.
+
+COMMAND="${1:-check}"
+if [ "$#" -gt 0 ]; then shift; fi
+
+BEST_EFFORT=false
+REQUESTED_FQDN=""
+# Empty means "not stated": resolved from the topology marker below, once its
+# path is known. Defaulting straight to central was wrong for every caller that
+# names no topology -- the licensing flow's `activate` is one -- because on a
+# co-located server central runs retire_local_if_needed and dismantles the
+# local Gateway/SFU, then enrolls against a central service that does not exist.
+TOPOLOGY="${RINGQ_MEET_TOPOLOGY:-}"
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --best-effort) BEST_EFFORT=true ;;
+        --fqdn)
+            shift
+            REQUESTED_FQDN="${1:-}"
+            ;;
+        --topology)
+            shift
+            TOPOLOGY="${1:-}"
+            ;;
+        *) printf 'ringq-meet: unknown option: %s\n' "$1" >&2; exit 64 ;;
+    esac
+    shift
+done
+
+RINGQ_ROOT="${RINGQ_ROOT:-/var/www/ringq}"
+WEB_ROOT="${RINGQ_WEB_ROOT:-/var/www/webapp}"
+SOURCE_DIR="${RINGQ_MEET_SOURCE_DIR:-$RINGQ_ROOT/node/meet}"
+INSTALL_ROOT="${RINGQ_MEET_INSTALL_ROOT:-/opt/ringq-meet-control-plane}"
+RELEASES_DIR="$INSTALL_ROOT/releases"
+CURRENT_LINK="$INSTALL_ROOT/current"
+PREVIOUS_LINK="$INSTALL_ROOT/previous"
+CONFIG_DIR="${RINGQ_MEET_CONFIG_DIR:-/etc/ringq}"
+CONFIG_GROUP="${RINGQ_MEET_CONFIG_GROUP:-www-data}"
+PKI_DIR="$CONFIG_DIR/pki"
+ENV_FILE="$CONFIG_DIR/meet-control-plane.env"
+SHARED_ENV_FILE="$CONFIG_DIR/.env"
+STATE_DIR="${RINGQ_MEET_STATE_DIR:-/var/lib/ringq-meet}"
+COLLABORATION_ROOT="${RINGQ_MEET_COLLABORATION_ROOT:-/var/lib/ringq/meet-collaboration}"
+STATE_FILE="$STATE_DIR/state.json"
+LOCK_FILE="$STATE_DIR/reconcile.lock"
+LOCAL_RESULT_FILE="$STATE_DIR/local-result.json"
+AUTO_ACTIVATION_BLOCK_FILE="$STATE_DIR/automatic-activation-blocked"
+TOPOLOGY_FILE="${RINGQ_MEET_TOPOLOGY_FILE:-/etc/ringq/meet-topology}"
+if [ -z "$TOPOLOGY" ]; then
+    TOPOLOGY="central"
+    if [ -s "$TOPOLOGY_FILE" ] && [ "$(tr -d '[:space:]' < "$TOPOLOGY_FILE")" = "local" ]; then
+        TOPOLOGY="local"
+    fi
+fi
+NGINX_SITE="${RINGQ_MEET_NGINX_SITE:-/etc/nginx/sites-available/ringq}"
+NGINX_ENABLED_DIR="${RINGQ_MEET_NGINX_ENABLED_DIR:-/etc/nginx/sites-enabled}"
+NGINX_MTLS_DIR="${RINGQ_MEET_NGINX_MTLS_DIR:-/etc/nginx/ringq-meet-mtls-enabled}"
+LOGROTATE_FILE="${RINGQ_MEET_LOGROTATE_FILE:-/etc/logrotate.d/ringq-meet-control-plane}"
+NODE_VERSION="${RINGQ_MEET_NODE_VERSION:-24.12.0}"
+NODE_BIN="${RINGQ_MEET_NODE:-/root/.nvm/versions/node/v$NODE_VERSION/bin/node}"
+NPM_BIN="${RINGQ_MEET_NPM:-$(dirname "$NODE_BIN")/npm}"
+PHP_BIN="${RINGQ_MEET_PHP:-php}"
+PM2_BIN="${RINGQ_MEET_PM2:-pm2}"
+NGINX_BIN="${RINGQ_MEET_NGINX:-nginx}"
+CURL_BIN="${RINGQ_MEET_CURL:-curl}"
+OPENSSL_BIN="${RINGQ_MEET_OPENSSL:-openssl}"
+JQ_BIN="${RINGQ_MEET_JQ:-jq}"
+PSQL_BIN="${RINGQ_MEET_PSQL:-psql}"
+ECOSYSTEM_CONFIG="${RINGQ_MEET_ECOSYSTEM_CONFIG:-$RINGQ_ROOT/ecosystem.config.js}"
+ENROLLMENT_URL="${RINGQ_MEET_ENROLLMENT_URL:-https://licensekey.ringq.com/api/v1/meet/enroll}"
+TEST_MODE="${RINGQ_MEET_TEST_MODE:-false}"
+CURRENT_GATE="initializing"
+TARGET_RELEASE=""
+CONFIG_REVISION=""
+ORIGINAL_ENABLED="false"
+ORIGINAL_FAILURE=""
+ORIGINAL_RELEASE=""
+ORIGINAL_CURRENT_PATH=""
+ORIGINAL_ENV_BACKUP=""
+FALLBACK_LOCK_DIR=""
+LOCAL_STACK_RECONCILED=false
+LOCK_ACQUIRED=false
+
+umask 077
+
+log() {
+    printf 'ringq-meet: %s\n' "$*"
+}
+
+fail() {
+    printf 'ringq-meet: ERROR: %s\n' "$*" >&2
+    return 1
+}
+
+require_root() {
+    if [ "$TEST_MODE" != "true" ] && [ "${EUID:-$(id -u)}" -ne 0 ]; then
+        fail "this command must run as root"
+    fi
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || fail "required command is unavailable: $1"
+}
+
+atomic_install() {
+    local source="$1"
+    local destination="$2"
+    local mode="$3"
+    local temporary="${destination}.new.$$"
+    install -d -m 0755 "$(dirname "$destination")"
+    install -m "$mode" "$source" "$temporary"
+    mv -f "$temporary" "$destination"
+}
+
+state_value() {
+    local expression="$1"
+    if [ -s "$STATE_FILE" ]; then
+        "$JQ_BIN" -r "$expression // empty" "$STATE_FILE" 2>/dev/null || true
+    fi
+}
+
+current_release() {
+    if [ -L "$CURRENT_LINK" ]; then
+        basename "$(readlink "$CURRENT_LINK")"
+    fi
+}
+
+write_state() {
+    local status="$1"
+    local enabled="$2"
+    local failure_code="${3:-}"
+    local release="${4:-$(current_release)}"
+    local fqdn="${5:-$(state_value '.fqdn')}"
+    local server_id="${6:-$(state_value '.serverId')}"
+    local entitlement="${7:-$(state_value '.entitled')}"
+    local revision="${8:-${CONFIG_REVISION:-$(state_value '.configRevision')}}"
+    local expires_at="${9:-$(state_value '.certificateExpiresAt')}"
+    local topology="$TOPOLOGY"
+    local local_release="$(state_value '.localStack.release')"
+    local gateway_version="$(state_value '.localStack.gatewayVersion')"
+    local sfu_version="$(state_value '.localStack.sfuVersion')"
+    local pending_sfu="$(state_value '.localStack.pendingSfuVersion')"
+    local local_health='{}'
+    local temporary="$STATE_FILE.new.$$"
+
+    if [ "$topology" = "local" ] && [ -s "$LOCAL_RESULT_FILE" ]; then
+        local_release="$("$JQ_BIN" -r '.release // empty' "$LOCAL_RESULT_FILE" 2>/dev/null || true)"
+        gateway_version="$("$JQ_BIN" -r '.gatewayVersion // empty' "$LOCAL_RESULT_FILE" 2>/dev/null || true)"
+        sfu_version="$("$JQ_BIN" -r '.sfuVersion // empty' "$LOCAL_RESULT_FILE" 2>/dev/null || true)"
+        pending_sfu="$("$JQ_BIN" -r '.pendingSfuVersion // empty' "$LOCAL_RESULT_FILE" 2>/dev/null || true)"
+        local_health="$("$JQ_BIN" -c '.health // {}' "$LOCAL_RESULT_FILE" 2>/dev/null || printf '{}')"
+    fi
+
+    install -d -m 0750 "$STATE_DIR"
+    "$JQ_BIN" -n \
+        --arg status "$status" \
+        --argjson enabled "$enabled" \
+        --arg failure "$failure_code" \
+        --arg release "$release" \
+        --arg fqdn "$fqdn" \
+        --arg serverId "$server_id" \
+        --arg entitlement "$entitlement" \
+        --arg revision "$revision" \
+        --arg expiresAt "$expires_at" \
+        --arg topology "$topology" \
+        --arg localRelease "$local_release" \
+        --arg gatewayVersion "$gateway_version" \
+        --arg sfuVersion "$sfu_version" \
+        --arg pendingSfuVersion "$pending_sfu" \
+        --argjson localHealth "$local_health" \
+        --arg updatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{status:$status,enabled:$enabled,release:$release,fqdn:$fqdn,serverId:$serverId,entitled:($entitlement == "true"),configRevision:$revision,certificateExpiresAt:$expiresAt,topology:$topology,updatedAt:$updatedAt} +
+         (if $topology == "local" then {localStack:({release:$localRelease,gatewayVersion:$gatewayVersion,sfuVersion:$sfuVersion,health:$localHealth} + (if $pendingSfuVersion == "" then {} else {pendingSfuVersion:$pendingSfuVersion} end))} else {} end) +
+         (if $failure == "" then {} else {failureCode:$failure} end)' \
+        > "$temporary"
+    chmod 0640 "$temporary"
+    mv -f "$temporary" "$STATE_FILE"
+}
+
+on_error() {
+    local code=$?
+    local env_restored=false
+    trap - ERR
+    set +e
+    if [ "$LOCK_ACQUIRED" != "true" ]; then
+        # Another reconciler owns all mutable Meet state. Do not disable PM2,
+        # rewrite state.json, or interfere with its candidate while reporting
+        # benign lock contention to a best-effort caller.
+        if [ "$BEST_EFFORT" = "true" ]; then exit 0; fi
+        exit "$code"
+    fi
+    if [ "$TOPOLOGY" = "local" ] && [ "$LOCAL_STACK_RECONCILED" = "true" ]; then
+        "$(local_installer)" rollback-candidate >/dev/null 2>&1 || true
+    fi
+    if [ -n "$ORIGINAL_ENV_BACKUP" ] && [ -f "$ORIGINAL_ENV_BACKUP" ]; then
+        atomic_install "$ORIGINAL_ENV_BACKUP" "$ENV_FILE" 0600 || true
+        rm -f "$ORIGINAL_ENV_BACKUP" || true
+        ORIGINAL_ENV_BACKUP=""
+        env_restored=true
+    fi
+    if [ "$ORIGINAL_ENABLED" = "true" ] && [ -n "$ORIGINAL_CURRENT_PATH" ] && [ -f "$ORIGINAL_CURRENT_PATH/.ringq-meet-ready" ]; then
+        ln -sfn "$ORIGINAL_CURRENT_PATH" "$CURRENT_LINK"
+        synchronize_source_to_current || true
+        [ "$env_restored" = "true" ] || set_env_value MEET_ENABLED true || true
+        pm2_reload || true
+        write_state "healthy_rollback" true "$CURRENT_GATE" "$ORIGINAL_RELEASE"
+        log "The candidate failed at $CURRENT_GATE; the previous healthy Meet release was restored."
+    else
+        set_env_value MEET_ENABLED false || true
+        pm2_reload || true
+        write_state "disabled" false "$CURRENT_GATE"
+        log "Meet remains unavailable (gate: $CURRENT_GATE). Core RingQ is unchanged."
+    fi
+    if [ "$BEST_EFFORT" = "true" ]; then
+        exit 0
+    fi
+    exit "$code"
+}
+
+trap on_error ERR
+
+acquire_lock() {
+    CURRENT_GATE="lock"
+    install -d -m 0750 "$STATE_DIR"
+    if command -v flock >/dev/null 2>&1; then
+        exec 9>"$LOCK_FILE"
+        flock -n 9 || fail "another Meet reconciliation is already running"
+    else
+        # macOS does not ship flock; this fallback also keeps developer and CI
+        # fixture tests portable. Production Debian uses the fd-based lock.
+        FALLBACK_LOCK_DIR="${LOCK_FILE}.d"
+        mkdir "$FALLBACK_LOCK_DIR" 2>/dev/null || fail "another Meet reconciliation is already running"
+        trap release_fallback_lock EXIT
+    fi
+    LOCK_ACQUIRED=true
+}
+
+release_fallback_lock() {
+    if [ -n "$FALLBACK_LOCK_DIR" ]; then
+        rmdir "$FALLBACK_LOCK_DIR" 2>/dev/null || true
+    fi
+}
+
+validate_topology() {
+    CURRENT_GATE="topology"
+    case "$TOPOLOGY" in
+        central) return 0 ;;
+        local)
+            [ -s "$TOPOLOGY_FILE" ] || fail "local topology requires an explicit topology marker"
+            [ "$(tr -d '[:space:]' < "$TOPOLOGY_FILE")" = "local" ] || fail "local topology is not enabled on this server"
+            local installer="${RINGQ_MEET_LOCAL_INSTALLER:-$RINGQ_ROOT/ops/meet/runtime/ringq-meet-local}"
+            # Fileserver transports do not preserve executable bits, and the
+            # update worker repairs them only when it ships Meet -- not on the
+            # path that calls `disable` because it is NOT shipping Meet. Now that
+            # a topology-less `disable` follows a local marker, a lost bit here
+            # would make the kill switch fail and leave Meet enabled. Repair it
+            # the way jobs.sh, the update worker and ringqctl already do.
+            if [ -f "$installer" ] && [ ! -x "$installer" ]; then
+                chmod 0755 "$installer" 2>/dev/null || true
+            fi
+            [ -x "$installer" ] || fail "the local runtime installer is unavailable"
+            ;;
+        *) fail "unsupported topology: $TOPOLOGY" ;;
+    esac
+}
+
+ensure_node() {
+    CURRENT_GATE="node24"
+    if [ -x "$NODE_BIN" ] && "$NODE_BIN" --version | grep -Eq '^v24\.'; then
+        [ -x "$NPM_BIN" ] || fail "Node 24 npm is unavailable"
+        return 0
+    fi
+    [ "${RINGQ_MEET_INSTALL_NODE:-true}" = "true" ] || fail "Node 24 is not present in the deployment image"
+    local nvm_dir="${NVM_DIR:-/root/.nvm}"
+    [ -s "$nvm_dir/nvm.sh" ] || fail "nvm is unavailable for the dedicated Meet runtime"
+    # shellcheck disable=SC1090
+    . "$nvm_dir/nvm.sh"
+    nvm install "$NODE_VERSION"
+    [ -x "$NODE_BIN" ] && "$NODE_BIN" --version | grep -Eq '^v24\.' || fail "Node 24 installation did not complete"
+}
+
+verify_source_manifest() {
+    CURRENT_GATE="manifest"
+    [ -d "$SOURCE_DIR" ] || fail "Meet control-plane source is missing"
+    [ -s "$SOURCE_DIR/release.json" ] || fail "Meet release metadata is missing"
+    [ -s "$SOURCE_DIR/release-manifest.sha256" ] || fail "Meet checksum manifest is missing"
+    if ! (
+        cd "$SOURCE_DIR"
+        sha256sum -c release-manifest.sha256 >/dev/null
+    ); then
+        fail "Meet release checksum verification failed"
+    fi
+    TARGET_RELEASE="$("$JQ_BIN" -r '.releaseVersion // empty' "$SOURCE_DIR/release.json")"
+    printf '%s' "$TARGET_RELEASE" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9_.+-]{0,79}$' || fail "Meet release version is invalid"
+}
+
+stage_release() {
+    CURRENT_GATE="control_plane_stage"
+    local target="$RELEASES_DIR/$TARGET_RELEASE"
+    local candidate_dir="$RELEASES_DIR/.${TARGET_RELEASE}.new.$$"
+    install -d -m 0755 "$RELEASES_DIR"
+    if [ ! -f "$target/.ringq-meet-ready" ]; then
+        rm -rf "$candidate_dir"
+        install -d -m 0755 "$candidate_dir"
+        tar --exclude='./node_modules' -C "$SOURCE_DIR" -cf - . | tar -C "$candidate_dir" -xf -
+        (
+            cd "$candidate_dir"
+            PATH="$(dirname "$NODE_BIN"):$PATH" "$NPM_BIN" ci --omit=dev --ignore-scripts
+            PATH="$(dirname "$NODE_BIN"):$PATH" "$NPM_BIN" run check
+        )
+        touch "$candidate_dir/.ringq-meet-ready"
+        chmod 0644 "$candidate_dir/.ringq-meet-ready"
+        mv "$candidate_dir" "$target"
+    fi
+}
+
+set_env_value() {
+    local key="$1"
+    local value="$2"
+    local temporary="$ENV_FILE.new.$$"
+    case "$value" in
+        *$'\n'*|*$'\r'*) fail "invalid newline in configuration value for $key" ;;
+    esac
+    if [ -f "$ENV_FILE" ]; then
+        grep -v "^${key}=" "$ENV_FILE" > "$temporary" || true
+    else
+        : > "$temporary"
+    fi
+    printf '%s=%s\n' "$key" "$value" >> "$temporary"
+    chmod 0600 "$temporary"
+    mv -f "$temporary" "$ENV_FILE"
+}
+
+env_value() {
+    local key="$1"
+    if [ -s "$ENV_FILE" ]; then
+        sed -n "s/^${key}=//p" "$ENV_FILE" | tail -n 1
+    fi
+}
+
+shared_env_line() {
+    local key="$1"
+    if [ -s "$SHARED_ENV_FILE" ]; then
+        grep -m1 "^${key}=" "$SHARED_ENV_FILE" || true
+    fi
+}
+
+ensure_disabled_config() {
+    local preserve_enabled="${1:-false}"
+    local feature_default=false
+    [ "$TOPOLOGY" = "local" ] && feature_default=true
+    CURRENT_GATE="disabled_config"
+    install -d -m 0750 "$CONFIG_DIR" "$PKI_DIR"
+    # FreeSWITCH runs as www-data and its Lua config layer reads
+    # $CONFIG_DIR/config.conf, with no shipped fallback: a directory it cannot
+    # traverse leaves every directory and dialplan lookup failing
+    # (`module 'resources.config' not found`) while cached profiles still read
+    # RUNNING. `install -d -m 0750` re-applies the mode to an existing
+    # directory but never its group, so the group is what must grant access.
+    # The update worker has always set it before calling this script, which is
+    # why only a fresh install -- where this runs first -- lost it. Only the
+    # directory: PKI_DIR and the secret env files stay root-only.
+    if chgrp "$CONFIG_GROUP" "$CONFIG_DIR" 2>/dev/null; then
+        chmod 0750 "$CONFIG_DIR"
+    else
+        chmod 0755 "$CONFIG_DIR"
+    fi
+    if [ "$TEST_MODE" != "true" ] && ! id -u ringq-meet-converter >/dev/null 2>&1; then
+        useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin --no-create-home ringq-meet-converter
+    fi
+    install -d -m 0755 "$NGINX_MTLS_DIR"
+    if [ ! -s "$ENV_FILE" ]; then
+        local temporary="$ENV_FILE.new.$$"
+        {
+            printf '%s\n' \
+                'MEET_ENABLED=false' \
+                'MEET_BIND_HOST=127.0.0.1' \
+                'MEET_PORT=6000' \
+                'MEET_BODY_LIMIT_BYTES=65536' \
+                'MEET_ALLOW_UNVERSIONED_COMPAT=false' \
+                'MEET_RECONCILE_INTERVAL_MS=10000' \
+                "MEET_FEATURE_CHAT=$feature_default" \
+                "MEET_FEATURE_CHAT_ATTACHMENTS=$feature_default" \
+                "MEET_FEATURE_WHITEBOARD=$feature_default" \
+                "MEET_FEATURE_PARTICIPANT_MEDIA_CONTROLS=$feature_default" \
+                "MEET_FEATURE_CHAT_ATTACHMENT_PREVIEW=$feature_default" \
+                "MEET_FEATURE_FILE_PRESENTATIONS=$feature_default" \
+                "MEET_FEATURE_MEETING_RECORDING=$feature_default" \
+                "MEET_FEATURE_MEETING_TRANSCRIPTION=$feature_default" \
+                "MEET_FEATURE_MEETING_SUMMARY=$feature_default" \
+                "MEET_FEATURE_MEETING_REVIEWS=$feature_default" \
+                "MEET_FEATURE_WHITEBOARD_ENHANCEMENTS=$feature_default" \
+                "MEET_FEATURE_HOST_PRIVACY_CONTROLS=$feature_default" \
+                'MEET_BWRAP_BIN=/usr/bin/bwrap' \
+                'MEET_PRLIMIT_BIN=/usr/bin/prlimit' \
+                'MEET_SYSTEMD_RUN_BIN=/usr/bin/systemd-run' \
+                'MEET_CONVERTER_USER=ringq-meet-converter' \
+                "MEET_COLLABORATION_ROOT=$COLLABORATION_ROOT" \
+                'MEET_CLAMDSCAN_BIN=/usr/bin/clamdscan' \
+                'MEET_REDIS_URL=redis://127.0.0.1:6379/0' \
+                'MEET_PHP_BASE=https://127.0.0.1:8443' \
+                'MEET_TENANT_CONFIG_PATH=/meetApi/tenantMeetConfig' \
+                'SFU_GATEWAY_TIMEOUT_MS=8000' \
+                'SFU_GATEWAY_ALLOW_INSECURE=false' \
+                'SFU_GATEWAY_CALLBACK_VERIFY_HEADER=x-ringq-mtls-verified' \
+                'SFU_GATEWAY_CALLBACK_VERIFY_VALUE=SUCCESS'
+            printf 'MEET_GUEST_TOKEN_SECRET=%s\n' "$("$OPENSSL_BIN" rand -hex 32)"
+            printf 'MEET_ATTACHMENT_SIGNING_SECRET=%s\n' "$("$OPENSSL_BIN" rand -hex 32)"
+            for key in PostgreSQL_DB_HOST PostgreSQL_DB_PORT PostgreSQL_DB_NAME PostgreSQL_DB_USER PostgreSQL_DB_PASSWORD; do
+                shared_env_line "$key"
+            done
+        } > "$temporary"
+        chmod 0600 "$temporary"
+        mv -f "$temporary" "$ENV_FILE"
+    fi
+    # The block above copies the database keys only when it CREATES the file.
+    # On a fresh Docker install the first reconcile runs before runtime init has
+    # written them to the shared env, so the Meet env was born without them and
+    # nothing ever added them: the control plane logged "durable writes
+    # disabled" and chat, whiteboard, recording and the rest read false while
+    # Meet itself reported healthy. Backfill any that are still missing;
+    # preserve-if-set, so a value already here is never overwritten.
+    local database_key database_line
+    for database_key in PostgreSQL_DB_HOST PostgreSQL_DB_PORT PostgreSQL_DB_NAME PostgreSQL_DB_USER PostgreSQL_DB_PASSWORD; do
+        [ -z "$(env_value "$database_key")" ] || continue
+        database_line="$(shared_env_line "$database_key")"
+        [ -n "${database_line#*=}" ] || continue
+        set_env_value "$database_key" "${database_line#*=}"
+    done
+    if [ "$preserve_enabled" != "true" ]; then
+        set_env_value MEET_ENABLED false
+    fi
+    for feature_name in \
+        CHAT CHAT_ATTACHMENTS WHITEBOARD PARTICIPANT_MEDIA_CONTROLS \
+        CHAT_ATTACHMENT_PREVIEW FILE_PRESENTATIONS MEETING_RECORDING \
+        MEETING_TRANSCRIPTION MEETING_SUMMARY MEETING_REVIEWS \
+        WHITEBOARD_ENHANCEMENTS HOST_PRIVACY_CONTROLS
+    do
+        [ -n "$(env_value "MEET_FEATURE_$feature_name")" ] || \
+            set_env_value "MEET_FEATURE_$feature_name" "$feature_default"
+    done
+    [ -n "$(env_value MEET_BWRAP_BIN)" ] || set_env_value MEET_BWRAP_BIN /usr/bin/bwrap
+    [ -n "$(env_value MEET_PRLIMIT_BIN)" ] || set_env_value MEET_PRLIMIT_BIN /usr/bin/prlimit
+    [ -n "$(env_value MEET_SYSTEMD_RUN_BIN)" ] || set_env_value MEET_SYSTEMD_RUN_BIN /usr/bin/systemd-run
+    [ -n "$(env_value MEET_CONVERTER_USER)" ] || set_env_value MEET_CONVERTER_USER ringq-meet-converter
+    [ -n "$(env_value MEET_COLLABORATION_ROOT)" ] || set_env_value MEET_COLLABORATION_ROOT "$COLLABORATION_ROOT"
+    [ -n "$(env_value MEET_CLAMDSCAN_BIN)" ] || set_env_value MEET_CLAMDSCAN_BIN /usr/bin/clamdscan
+    [ -n "$(env_value MEET_ATTACHMENT_SIGNING_SECRET)" ] || set_env_value MEET_ATTACHMENT_SIGNING_SECRET "$("$OPENSSL_BIN" rand -hex 32)"
+    install -d -m 0750 "$COLLABORATION_ROOT"
+    chmod 0600 "$ENV_FILE"
+
+    if [ -f "$RINGQ_ROOT/../ops/meet/tenant-control-plane/meet-control-plane.logrotate" ]; then
+        atomic_install "$RINGQ_ROOT/../ops/meet/tenant-control-plane/meet-control-plane.logrotate" "$LOGROTATE_FILE" 0644
+    elif [ -f "$RINGQ_ROOT/ops/meet/tenant-control-plane/meet-control-plane.logrotate" ]; then
+        atomic_install "$RINGQ_ROOT/ops/meet/tenant-control-plane/meet-control-plane.logrotate" "$LOGROTATE_FILE" 0644
+    else
+        local logrotate_temporary="$LOGROTATE_FILE.new.$$"
+        install -d -m 0755 "$(dirname "$LOGROTATE_FILE")"
+        cat > "$logrotate_temporary" <<'EOF'
+/var/log/ringq/meet-control-plane-*.log {
+    daily
+    rotate 14
+    size 50M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    create 0640 root adm
+}
+EOF
+        chmod 0644 "$logrotate_temporary"
+        mv -f "$logrotate_temporary" "$LOGROTATE_FILE"
+    fi
+}
+
+apply_schema() {
+    CURRENT_GATE="schema"
+    [ "$TEST_MODE" = "true" ] && return 0
+    "$PHP_BIN" "$RINGQ_ROOT/app/cli.php" meetSchema up >/dev/null
+    "$PHP_BIN" "$RINGQ_ROOT/app/cli.php" meetSchema check >/dev/null
+}
+
+switch_candidate() {
+    CURRENT_GATE="release_switch"
+    local candidate
+    candidate="$(readlink -f "$RELEASES_DIR/$TARGET_RELEASE")"
+    [ -f "$candidate/.ringq-meet-ready" ] || fail "candidate release is not ready"
+    local old=""
+    if [ -L "$CURRENT_LINK" ]; then old="$(readlink -f "$CURRENT_LINK")"; fi
+    if [ -n "$old" ] && [ "$old" != "$candidate" ]; then
+        ln -sfn "$old" "$PREVIOUS_LINK"
+    fi
+    ln -sfn "$candidate" "$CURRENT_LINK"
+    synchronize_source_to_current
+}
+
+synchronize_source_to_current() {
+    local selected
+    selected="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
+    [ -n "$selected" ] && [ -f "$selected/.ringq-meet-ready" ] || fail "selected Meet release is incomplete"
+    install -d -m 0755 "$SOURCE_DIR"
+    rsync -a --delete \
+        --exclude='node_modules/' \
+        --exclude='.ringq-meet-ready' \
+        "$selected/" "$SOURCE_DIR/"
+    (
+        cd "$SOURCE_DIR"
+        sha256sum -c release-manifest.sha256 >/dev/null
+    ) || fail "selected Meet release could not be synchronized to its source mirror"
+}
+
+pm2_reload() {
+    [ "$TEST_MODE" = "true" ] && return 0
+    command -v "$PM2_BIN" >/dev/null 2>&1 || fail "PM2 is unavailable"
+    [ -f "$ECOSYSTEM_CONFIG" ] || fail "PM2 ecosystem configuration is missing"
+    local expected_script="$CURRENT_LINK/server.js"
+    local active_script=""
+    active_script="$("$PM2_BIN" jlist 2>/dev/null | "$JQ_BIN" -r '.[] | select(.name == "meeting") | .pm2_env.pm_exec_path // empty' | head -n 1)"
+    if [ -n "$active_script" ] && [ "$active_script" != "$expected_script" ]; then
+        log "Replacing stale PM2 meeting process with the Meet control plane."
+        "$PM2_BIN" delete meeting >/dev/null
+    fi
+    RINGQ_MEET_NODE="$NODE_BIN" "$PM2_BIN" startOrReload "$ECOSYSTEM_CONFIG" --only meeting --update-env >/dev/null
+    "$PM2_BIN" save >/dev/null
+}
+
+local_health() {
+    CURRENT_GATE="local_health"
+    [ "$TEST_MODE" = "true" ] && return 0
+    local attempt
+    # A fresh Docker volume can need more than 15 seconds for the first PM2
+    # control-plane start while PostgreSQL and Redis finish settling. Retrying
+    # here avoids rolling back an otherwise healthy first installation.
+    for attempt in $(seq 1 60); do
+        if "$CURL_BIN" -fsS --max-time 2 http://127.0.0.1:6000/healthz | "$JQ_BIN" -e '.ok == true' >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    fail "Meet control plane did not become healthy"
+}
+
+install_nginx_routes() {
+    CURRENT_GATE="nginx_routes"
+    [ "$TEST_MODE" = "true" ] && return 0
+    local retrofit="$RINGQ_ROOT/app/scripts/ringq-meet-nginx-retrofit.py"
+    local operation_backup
+    [ -f "$retrofit" ] || fail "Meet Nginx retrofit tool is missing"
+    [ -f "$NGINX_SITE" ] || fail "RingQ Nginx site is missing"
+    operation_backup="$(mktemp "$STATE_DIR/nginx-site.XXXXXX")"
+    cp -a "$NGINX_SITE" "$operation_backup"
+    python3 "$retrofit" --mode "$TOPOLOGY" "$NGINX_SITE"
+    if [ -L "$NGINX_ENABLED_DIR/ringqmeet" ]; then
+        unlink "$NGINX_ENABLED_DIR/ringqmeet"
+    fi
+    if ! "$NGINX_BIN" -t >/dev/null; then
+        atomic_install "$operation_backup" "$NGINX_SITE" 0644
+        rm -f "$operation_backup"
+        fail "Nginx rejected the Meet route retrofit"
+    fi
+    if ! systemctl reload nginx; then
+        atomic_install "$operation_backup" "$NGINX_SITE" 0644
+        "$NGINX_BIN" -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
+        rm -f "$operation_backup"
+        fail "Nginx could not reload the Meet route retrofit"
+    fi
+    rm -f "$operation_backup"
+}
+
+local_installer() {
+    printf '%s' "${RINGQ_MEET_LOCAL_INSTALLER:-$RINGQ_ROOT/ops/meet/runtime/ringq-meet-local}"
+}
+
+retire_local_if_needed() {
+    [ "$TOPOLOGY" = "central" ] || return 0
+    [ "$(state_value '.topology')" = "local" ] || return 0
+    CURRENT_GATE="local_retire"
+    local installer
+    installer="$(local_installer)"
+    [ -x "$installer" ] || fail "local runtime cleanup tool is unavailable"
+    "$installer" disable
+    # Remove the local /rtc and webhook proxy block immediately. This
+    # happens before central enrollment so a failed central activation cannot
+    # leave dead local routes behind.
+    install_nginx_routes
+}
+
+resolve_fqdn() {
+    if [ -n "$REQUESTED_FQDN" ]; then
+        printf '%s' "$REQUESTED_FQDN"
+        return
+    fi
+    local saved
+    saved="$(state_value '.fqdn')"
+    if [ -n "$saved" ]; then
+        printf '%s' "$saved"
+        return
+    fi
+    if command -v redis-cli >/dev/null 2>&1; then
+        redis-cli --raw GET setup_ringq 2>/dev/null || true
+    fi
+}
+
+server_id_for() {
+    local fqdn="$1"
+    local reference=""
+    if [ -s /var/log/ringq/install_reference_id ]; then
+        reference="$(head -n 1 /var/log/ringq/install_reference_id)"
+    fi
+    printf 'server-%s' "$(printf '%s' "$reference:$fqdn" | sha256sum | cut -c1-20)"
+}
+
+license_key() {
+    command -v redis-cli >/dev/null 2>&1 || return 0
+    redis-cli --raw GET ringq_config 2>/dev/null | "$JQ_BIN" -r '.data.licenseKey // empty' 2>/dev/null || true
+}
+
+licensed_fqdn() {
+    command -v redis-cli >/dev/null 2>&1 || return 0
+    redis-cli --raw GET ringq_config 2>/dev/null | "$JQ_BIN" -r '.data.fqdn // empty' 2>/dev/null || true
+}
+
+automatic_local_activation_ready() {
+    [ "$TOPOLOGY" = "local" ] || return 1
+    [ ! -e "$AUTO_ACTIVATION_BLOCK_FILE" ] || return 1
+    [ "$ORIGINAL_FAILURE" != "operator_disabled" ] || return 1
+
+    local fqdn
+    [ -n "$(license_key)" ] || return 1
+    fqdn="$(licensed_fqdn)"
+    printf '%s' "$fqdn" | grep -Eqi '^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$'
+}
+
+block_automatic_activation() {
+    local temporary="$AUTO_ACTIVATION_BLOCK_FILE.new.$$"
+    install -d -m 0750 "$STATE_DIR"
+    printf '%s\n' 'Activation must be requested explicitly.' > "$temporary"
+    chmod 0640 "$temporary"
+    mv -f "$temporary" "$AUTO_ACTIVATION_BLOCK_FILE"
+}
+
+database_value() {
+    local key="$1"
+    local value
+    value="$(env_value "$key")"
+    if [ -z "$value" ]; then
+        value="$(shared_env_line "$key")"
+        value="${value#*=}"
+    fi
+    printf '%s' "$value"
+}
+
+tenant_payload() {
+    local fqdn="$1"
+    local db_host db_port db_name db_user db_password rows host uuid tenant_key
+    db_host="$(database_value PostgreSQL_DB_HOST)"
+    db_port="$(database_value PostgreSQL_DB_PORT)"
+    db_name="$(database_value PostgreSQL_DB_NAME)"
+    db_user="$(database_value PostgreSQL_DB_USER)"
+    db_password="$(database_value PostgreSQL_DB_PASSWORD)"
+    [ -n "$db_host" ] && [ -n "$db_name" ] && [ -n "$db_user" ] || fail "database identity is unavailable"
+    rows="$(PGPASSWORD="$db_password" "$PSQL_BIN" -h "$db_host" -p "${db_port:-5432}" -U "$db_user" -d "$db_name" -At -F $'\t' -c "SELECT lower(domain_name), lower(domain_uuid::text) FROM v_domains WHERE coalesce(domain_enabled, 'true') = 'true' ORDER BY domain_name" 2>/dev/null)"
+    [ -n "$rows" ] || fail "no enabled RingQ tenant domains were found"
+    while IFS=$'\t' read -r host uuid; do
+        [ -n "$host" ] && [ -n "$uuid" ] || continue
+        tenant_key="LKRQ$(printf '%s' "${host}:${uuid}" | sha256sum | cut -c1-12)"
+        "$JQ_BIN" -cn --arg domainUuid "$uuid" --arg host "$host" --arg tenantKey "$tenant_key" '{domainUuid:$domainUuid,host:$host,tenantKey:$tenantKey}'
+    done <<< "$rows" | "$JQ_BIN" -s --arg fallback "$fqdn" 'if length > 0 then . else [{host:$fallback}] end'
+}
+
+validate_enrollment_response() {
+    local response="$1"
+    "$JQ_BIN" -e '
+      (.serverId | type == "string" and length > 0) and
+      (.gatewayUrl | type == "string" and startswith("https://")) and
+      (.clientCertificatePem | type == "string" and contains("BEGIN CERTIFICATE")) and
+      (.gatewayCaPem | type == "string" and contains("BEGIN CERTIFICATE")) and
+      (.callbackCaPem | type == "string" and contains("BEGIN CERTIFICATE")) and
+      (.tenants | type == "array" and length > 0) and
+      (.entitled | type == "boolean") and
+      (.callbackVerified == true) and
+      (.configRevision | type == "string" and length > 0) and
+      (.expiresAt | type == "string" and length > 0)
+    ' "$response" >/dev/null
+}
+
+enroll() {
+    CURRENT_GATE="enrollment_identity"
+    require_command "$CURL_BIN"
+    require_command "$OPENSSL_BIN"
+    require_command "$PSQL_BIN"
+    local fqdn server_id key_file csr_file payload_file response_file cert_file ca_file callback_ca_file license tenants
+    fqdn="$(resolve_fqdn)"
+    printf '%s' "$fqdn" | grep -Eqi '^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$' || fail "a valid licensed FQDN is required for Meet enrollment"
+    server_id="$(server_id_for "$fqdn")"
+    key_file="$PKI_DIR/tenant-control-plane.key"
+    csr_file="$(mktemp "$STATE_DIR/enroll-csr.XXXXXX")"
+    payload_file="$(mktemp "$STATE_DIR/enroll-request.XXXXXX")"
+    response_file="$(mktemp "$STATE_DIR/enroll-response.XXXXXX")"
+    cert_file="$(mktemp "$STATE_DIR/enroll-cert.XXXXXX")"
+    ca_file="$(mktemp "$STATE_DIR/enroll-ca.XXXXXX")"
+    callback_ca_file="$(mktemp "$STATE_DIR/enroll-callback-ca.XXXXXX")"
+    trap 'rm -f "$csr_file" "$payload_file" "$response_file" "$cert_file" "$ca_file" "$callback_ca_file"' RETURN
+
+    if [ ! -s "$key_file" ]; then
+        "$OPENSSL_BIN" genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$key_file" >/dev/null 2>&1
+        chmod 0600 "$key_file"
+    fi
+    "$OPENSSL_BIN" req -new -sha256 -key "$key_file" -out "$csr_file" \
+        -subj "/CN=$server_id" -addext "subjectAltName=URI:spiffe://ringq/server/$server_id" >/dev/null 2>&1
+
+    license="$(license_key)"
+    [ -n "$license" ] || fail "the validated RingQ license identity is unavailable"
+    tenants="$(tenant_payload "$fqdn")"
+    "$JQ_BIN" -n \
+        --arg licenseKey "$license" \
+        --arg fqdn "$fqdn" \
+        --arg installationId "$server_id" \
+        --arg csrPem "$(cat "$csr_file")" \
+        --arg callbackUrl "https://$fqdn/meet/api/v1/gateway/events" \
+        --arg releaseVersion "$TARGET_RELEASE" \
+        --arg nonce "$("$OPENSSL_BIN" rand -hex 24)" \
+        --argjson tenants "$tenants" \
+        '{licenseKey:$licenseKey,fqdn:$fqdn,installationId:$installationId,csrPem:$csrPem,callbackUrl:$callbackUrl,releaseVersion:$releaseVersion,nonce:$nonce,tenants:$tenants}' \
+        > "$payload_file"
+
+    CURRENT_GATE="enrollment_api"
+    local curl_args=(-fsS --connect-timeout 8 --max-time 30 -H 'Content-Type: application/json' --data-binary "@$payload_file" -o "$response_file" "$ENROLLMENT_URL")
+    if [ -s "$PKI_DIR/tenant-control-plane.crt" ] && [ -s "$PKI_DIR/sfu-gateway-ca.pem" ]; then
+        curl_args=(--cert "$PKI_DIR/tenant-control-plane.crt" --key "$key_file" "${curl_args[@]}")
+    fi
+    "$CURL_BIN" "${curl_args[@]}"
+    validate_enrollment_response "$response_file" || fail "the enrollment service returned an invalid contract"
+    [ "$("$JQ_BIN" -r '.serverId' "$response_file")" = "$server_id" ] || fail "the enrollment server identity did not match the CSR"
+    [ "$(printf '%s' "$tenants" | "$JQ_BIN" -c '[.[] | {domainUuid,host,tenantKey}] | sort_by(.tenantKey)')" = "$("$JQ_BIN" -c '[.tenants[] | {domainUuid,host,tenantKey}] | sort_by(.tenantKey)' "$response_file")" ] || fail "the enrollment tenant mappings did not match this server"
+
+    "$JQ_BIN" -r '.clientCertificatePem' "$response_file" > "$cert_file"
+    "$JQ_BIN" -r '.gatewayCaPem' "$response_file" > "$ca_file"
+    "$JQ_BIN" -r '.callbackCaPem' "$response_file" > "$callback_ca_file"
+    "$OPENSSL_BIN" x509 -in "$cert_file" -noout >/dev/null 2>&1
+    "$OPENSSL_BIN" verify -CAfile "$ca_file" "$cert_file" >/dev/null 2>&1
+    "$OPENSSL_BIN" x509 -in "$cert_file" -noout -ext subjectAltName | grep -Fq "URI:spiffe://ringq/server/$server_id" || fail "the enrollment certificate has the wrong server identity"
+    [ "$("$OPENSSL_BIN" x509 -in "$cert_file" -pubkey -noout | "$OPENSSL_BIN" pkey -pubin -outform DER 2>/dev/null | sha256sum)" = "$("$OPENSSL_BIN" pkey -in "$key_file" -pubout -outform DER 2>/dev/null | sha256sum)" ] || fail "the enrollment certificate does not match the local private key"
+
+    atomic_install "$cert_file" "$PKI_DIR/tenant-control-plane.crt" 0644
+    atomic_install "$ca_file" "$PKI_DIR/sfu-gateway-ca.pem" 0644
+    atomic_install "$callback_ca_file" "$PKI_DIR/sfu-gateway-callback-ca.pem" 0644
+    install -d -m 0755 "$NGINX_MTLS_DIR"
+    local nginx_ca="$NGINX_MTLS_DIR/gateway-ca.conf.new.$$"
+    {
+        printf 'ssl_client_certificate %s;\n' "$PKI_DIR/sfu-gateway-callback-ca.pem"
+        printf 'ssl_verify_client optional;\n'
+        printf 'ssl_verify_depth 2;\n'
+    } > "$nginx_ca"
+    chmod 0644 "$nginx_ca"
+    mv -f "$nginx_ca" "$NGINX_MTLS_DIR/gateway-ca.conf"
+
+    set_env_value SFU_GATEWAY_URL "$("$JQ_BIN" -r '.gatewayUrl' "$response_file")"
+    set_env_value SFU_GATEWAY_CA_FILE "$PKI_DIR/sfu-gateway-ca.pem"
+    set_env_value SFU_GATEWAY_CLIENT_CERT_FILE "$PKI_DIR/tenant-control-plane.crt"
+    set_env_value SFU_GATEWAY_CLIENT_KEY_FILE "$key_file"
+    set_env_value MEET_TENANT_HOST "$("$JQ_BIN" -r '[.tenants[].host] | join(",")' "$response_file")"
+    CONFIG_REVISION="$("$JQ_BIN" -r '.configRevision' "$response_file")"
+    local entitled
+    entitled="$("$JQ_BIN" -r '.entitled' "$response_file")"
+    local expires_at
+    expires_at="$("$JQ_BIN" -r '.expiresAt' "$response_file")"
+    write_state "enrolled" false "" "$TARGET_RELEASE" "$fqdn" "$server_id" "$entitled" "$CONFIG_REVISION" "$expires_at"
+    trap - RETURN
+    rm -f "$csr_file" "$payload_file" "$response_file" "$cert_file" "$ca_file" "$callback_ca_file"
+}
+
+gateway_health() {
+    CURRENT_GATE="gateway_health"
+    [ "$TEST_MODE" = "true" ] && return 0
+    local gateway
+    gateway="$(env_value SFU_GATEWAY_URL)"
+    [ -n "$gateway" ] || fail "central gateway URL is unavailable"
+    "$CURL_BIN" -fsS --connect-timeout 5 --max-time 10 \
+        --cert "$PKI_DIR/tenant-control-plane.crt" \
+        --key "$PKI_DIR/tenant-control-plane.key" \
+        --cacert "$PKI_DIR/sfu-gateway-ca.pem" \
+        "${gateway%/}/health/ready" | "$JQ_BIN" -e '.status == "ready" or .ok == true' >/dev/null
+}
+
+public_capabilities() {
+    CURRENT_GATE="public_capabilities"
+    [ "$TEST_MODE" = "true" ] && return 0
+    local fqdn="${1:-}"
+    [ -n "$fqdn" ] || fqdn="$(state_value '.fqdn')"
+    [ -n "$fqdn" ] || fail "Meet FQDN is unavailable"
+    # This gate runs immediately after `pm2_reload`, and a control plane that
+    # already answers /healthz on loopback does not yet know the Gateway is up:
+    # its own gateway probe is not instantaneous, so a single sample can read
+    # `gatewayHealthy: false` seconds after a reload that was going to succeed.
+    # Sampling once therefore rolled back and DISABLED installations whose 17
+    # local gates had all passed - reported to the operator as the contentless
+    # "Meetings could not be set up on this server." The neighbouring
+    # local_health gate has always retried for exactly this reason; match its
+    # budget, and report what the endpoint actually said rather than a bare
+    # gate name.
+    local attempt attempts response=""
+    attempts="${RINGQ_MEET_PUBLIC_CAPABILITY_ATTEMPTS:-30}"
+    for attempt in $(seq 1 "$attempts"); do
+        response="$("$CURL_BIN" -fsS --connect-timeout 5 --max-time 15 "https://$fqdn/meet/api/v1/capabilities" 2>&1 || true)"
+        if printf '%s' "$response" | "$JQ_BIN" -e '.apiVersion == "v1" and .enabled == true and .gatewayHealthy == true' >/dev/null 2>&1; then
+            return 0
+        fi
+        [ "$attempt" -lt "$attempts" ] && sleep 2
+    done
+    fail "public capabilities did not report an enabled, healthy Meet: $(printf '%s' "$response" | tr '\n' ' ' | cut -c1-200)"
+}
+
+install_disabled() {
+    local installer fqdn server_id
+    retire_local_if_needed
+    ensure_node
+    verify_source_manifest
+    stage_release
+    ensure_disabled_config
+    apply_schema
+    switch_candidate
+
+    if [ "$TOPOLOGY" = "local" ]; then
+        installer="$(local_installer)"
+        CURRENT_GATE="local_stack"
+        "$installer" reconcile
+        LOCAL_STACK_RECONCILED=true
+        fqdn="$("$JQ_BIN" -r '.fqdn // empty' "$LOCAL_RESULT_FILE")"
+        server_id="$("$JQ_BIN" -r '.serverId // empty' "$LOCAL_RESULT_FILE")"
+        [ -n "$fqdn" ] && [ -n "$server_id" ] || fail "local identity result is incomplete"
+
+        install_nginx_routes
+        set_env_value MEET_ENABLED false
+        pm2_reload
+        local_health
+
+        CURRENT_GATE="local_verify"
+        "$installer" verify
+        set_env_value MEET_ENABLED false
+        write_state "installed_disabled" false "" "$TARGET_RELEASE" "$fqdn" "$server_id" true "local"
+        LOCAL_STACK_RECONCILED=false
+        prune_releases
+        log "Meet $TARGET_RELEASE and the local Gateway/SFU are prepared and disabled pending licensed activation."
+        return 0
+    fi
+
+    install_nginx_routes
+    pm2_reload
+    local_health
+    write_state "installed_disabled" false "" "$TARGET_RELEASE"
+    log "Meet $TARGET_RELEASE is installed and disabled pending enrollment."
+}
+
+local_update() {
+    local installer fqdn server_id
+    installer="$(local_installer)"
+    ensure_node
+    verify_source_manifest
+    stage_release
+    ensure_disabled_config
+    apply_schema
+    switch_candidate
+
+    CURRENT_GATE="local_stack"
+    "$installer" reconcile
+    LOCAL_STACK_RECONCILED=true
+    fqdn="$("$JQ_BIN" -r '.fqdn // empty' "$LOCAL_RESULT_FILE")"
+    server_id="$("$JQ_BIN" -r '.serverId // empty' "$LOCAL_RESULT_FILE")"
+    [ -n "$fqdn" ] && [ -n "$server_id" ] || fail "local identity result is incomplete"
+
+    install_nginx_routes
+    set_env_value MEET_ENABLED false
+    pm2_reload
+    local_health
+
+    CURRENT_GATE="local_verify"
+    "$installer" verify
+    set_env_value MEET_ENABLED true
+    CURRENT_GATE="enabled_start"
+    pm2_reload
+    local_health
+    public_capabilities "$fqdn"
+    write_state "healthy" true "" "$TARGET_RELEASE" "$fqdn" "$server_id" true "local"
+    LOCAL_STACK_RECONCILED=false
+    prune_releases
+    log "Meet $TARGET_RELEASE and the local Gateway/SFU are enabled and healthy."
+}
+
+activate() {
+    retire_local_if_needed
+    ensure_node
+    verify_source_manifest
+    if [ "$ORIGINAL_ENABLED" = "true" ] && [ "$(current_release)" = "$TARGET_RELEASE" ]; then
+        stage_release
+        ensure_disabled_config true
+        apply_schema
+    else
+        stage_release
+        ensure_disabled_config
+        apply_schema
+        switch_candidate
+        install_nginx_routes
+        pm2_reload
+        local_health
+        write_state "installed_disabled" false "" "$TARGET_RELEASE"
+    fi
+    enroll
+    if [ "$(state_value '.entitled')" != "true" ]; then
+        set_env_value MEET_ENABLED false
+        pm2_reload
+        local_health
+        write_state "disabled_not_entitled" false "not_entitled" "$TARGET_RELEASE"
+        log "Meet enrollment succeeded, but central entitlement is disabled."
+        return 0
+    fi
+    gateway_health
+    install_nginx_routes
+    set_env_value MEET_ENABLED true
+    CURRENT_GATE="enabled_start"
+    pm2_reload
+    local_health
+    if ! public_capabilities; then
+        set_env_value MEET_ENABLED false
+        pm2_reload || true
+        return 1
+    fi
+    write_state "healthy" true "" "$TARGET_RELEASE"
+    prune_releases
+    log "Meet $TARGET_RELEASE is enabled and healthy."
+}
+
+prune_releases() {
+    local current_path="" previous_path="" release_path resolved_path
+    # Compare canonical absolute paths. The current and previous links may hold a
+    # target relative to the install root, and a plain string compare against the
+    # absolute paths the glob below produces would then never match -- pruning the
+    # very release a rollback depends on.
+    [ -L "$CURRENT_LINK" ] && current_path="$(readlink -f "$CURRENT_LINK")"
+    [ -L "$PREVIOUS_LINK" ] && previous_path="$(readlink -f "$PREVIOUS_LINK")"
+    for release_path in "$RELEASES_DIR"/*; do
+        [ -d "$release_path" ] || continue
+        resolved_path="$(readlink -f "$release_path")"
+        [ -n "$current_path" ] && [ "$resolved_path" = "$current_path" ] && continue
+        [ -n "$previous_path" ] && [ "$resolved_path" = "$previous_path" ] && continue
+        rm -rf -- "$release_path"
+    done
+}
+
+disable_meet() {
+    CURRENT_GATE="disable"
+    ensure_disabled_config
+    set_env_value MEET_ENABLED false
+    pm2_reload
+    local_health
+    block_automatic_activation
+    write_state "disabled" false "operator_disabled"
+    log "Meet is disabled; core RingQ remains available."
+}
+
+rollback() {
+    CURRENT_GATE="rollback"
+    [ -L "$PREVIOUS_LINK" ] || fail "no previous Meet release is available"
+    local previous current
+    previous="$(readlink -f "$PREVIOUS_LINK")"
+    [ -f "$previous/.ringq-meet-ready" ] || fail "the previous Meet release is incomplete"
+    current=""
+    if [ -L "$CURRENT_LINK" ]; then current="$(readlink -f "$CURRENT_LINK")"; fi
+    ln -sfn "$previous" "$CURRENT_LINK"
+    if [ -n "$current" ]; then ln -sfn "$current" "$PREVIOUS_LINK"; fi
+    synchronize_source_to_current
+    set_env_value MEET_ENABLED false
+    pm2_reload
+    local_health
+    block_automatic_activation
+    write_state "rolled_back_disabled" false "" "$(basename "$previous")"
+    log "Rolled back to $(basename "$previous"); Meet remains disabled until activate passes."
+}
+
+check_status() {
+    local local_ok=false node_ok=false cert_ok=false nginx_ok=false
+    local state_source="$STATE_FILE"
+    [ -f "$state_source" ] || state_source=/dev/null
+    [ -x "$NODE_BIN" ] && "$NODE_BIN" --version 2>/dev/null | grep -Eq '^v24\.' && node_ok=true
+    [ -s "$PKI_DIR/tenant-control-plane.crt" ] && "$OPENSSL_BIN" x509 -checkend 86400 -noout -in "$PKI_DIR/tenant-control-plane.crt" >/dev/null 2>&1 && cert_ok=true
+    "$CURL_BIN" -fsS --max-time 2 http://127.0.0.1:6000/healthz >/dev/null 2>&1 && local_ok=true
+    [ "$TEST_MODE" = "true" ] && nginx_ok=true
+    if [ "$TEST_MODE" != "true" ] && "$NGINX_BIN" -t >/dev/null 2>&1; then nginx_ok=true; fi
+    "$JQ_BIN" -n \
+        --arg release "$(current_release)" \
+        --argjson node24 "$node_ok" \
+        --argjson certificate "$cert_ok" \
+        --argjson controlPlane "$local_ok" \
+        --argjson nginx "$nginx_ok" \
+        --slurpfile state "$state_source" \
+        '{release:$release,node24:$node24,certificateValid:$certificate,controlPlaneReachable:$controlPlane,nginxValid:$nginx,state:(if ($state|length)>0 then $state[0] else {} end)}'
+}
+
+main() {
+    require_root
+    require_command "$JQ_BIN"
+    require_command sha256sum
+    require_command rsync
+    acquire_lock
+    if [ -f "$ENV_FILE" ]; then
+        ORIGINAL_ENV_BACKUP="$(mktemp "$STATE_DIR/reconcile-env.XXXXXX")"
+        install -m 0600 "$ENV_FILE" "$ORIGINAL_ENV_BACKUP"
+    fi
+    ORIGINAL_ENABLED="$(state_value '.enabled')"
+    [ "$ORIGINAL_ENABLED" = "true" ] || ORIGINAL_ENABLED=false
+    ORIGINAL_FAILURE="$(state_value '.failureCode')"
+    if [ "$ORIGINAL_FAILURE" = "operator_disabled" ]; then
+        block_automatic_activation
+    fi
+    ORIGINAL_RELEASE="$(current_release)"
+    if [ -L "$CURRENT_LINK" ]; then ORIGINAL_CURRENT_PATH="$(readlink -f "$CURRENT_LINK")"; fi
+    validate_topology
+    case "$COMMAND" in
+        install-disabled) install_disabled ;;
+        enroll)
+            ensure_node
+            verify_source_manifest
+            ensure_disabled_config
+            enroll
+            ;;
+        activate)
+            rm -f "$AUTO_ACTIVATION_BLOCK_FILE"
+            if [ "$TOPOLOGY" = "local" ]; then local_update; else activate; fi
+            ;;
+        update)
+            if [ "$TOPOLOGY" = "local" ]; then
+                if [ "$ORIGINAL_ENABLED" = "true" ] || automatic_local_activation_ready; then
+                    local_update
+                else
+                    install_disabled
+                fi
+            else
+                if [ "$ORIGINAL_ENABLED" = "true" ]; then activate; else install_disabled; fi
+            fi
+            ;;
+        check) check_status ;;
+        disable) disable_meet ;;
+        rollback) rollback ;;
+        *) fail "usage: ringq-meet-reconcile {install-disabled|enroll|activate|update|check|disable|rollback} [--best-effort] [--fqdn NAME] [--topology central|local]" ;;
+    esac
+    if [ -n "$ORIGINAL_ENV_BACKUP" ]; then
+        rm -f "$ORIGINAL_ENV_BACKUP"
+        ORIGINAL_ENV_BACKUP=""
+    fi
+}
+
+main

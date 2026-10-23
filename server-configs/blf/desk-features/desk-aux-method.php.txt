@@ -1,0 +1,78 @@
+    /**
+     * [desk-aux] Agent Status / Change Status keys on desk phones: the phone dials *26<aux code id>,
+     * the dial plan ringq_desk_aux runs ringq_desk_aux.lua, which calls this from the server itself
+     * (127.0.0.1 only). Sets the extension's aux code the same way the dialer's Agent Status does
+     * (api/auxcodes, auxcode_type 3, all queues).
+     */
+    private function deskAux()
+    {
+        $this->response->setHeader("Content-Type", "application/json");
+        $remote = (string) ($_SERVER["REMOTE_ADDR"] ?? "");
+        if ($remote !== "127.0.0.1" && $remote !== "::1") {
+            return $this->response->setStatusCode(403, "Forbidden")->setContent(json_encode(["result" => "error"]));
+        }
+        $domain = (string) $this->request->getQuery("domain", "string", "");
+        $user = (string) $this->request->getQuery("user", "string", "");
+        $auxId = (int) $this->request->getQuery("aux", "int", 0);
+        $vDomains = VDomains::findFirst([
+            "conditions" => "domain_name = :domain_name:",
+            "bind" => ["domain_name" => $domain],
+            "bindTypes" => [Column::BIND_PARAM_STR],
+        ]);
+        $vExtension = $vDomains ? VExtensions::findFirst([
+            "conditions" => "domain_uuid = :domain_uuid: AND (number_alias = :alias: OR extension = :extension:)",
+            "bind" => ["domain_uuid" => $vDomains->domain_uuid, "alias" => $user, "extension" => $user],
+            "bindTypes" => ["domain_uuid" => Column::BIND_PARAM_STR, "alias" => Column::BIND_PARAM_STR, "extension" => Column::BIND_PARAM_STR],
+        ]) : null;
+        $qAuxcode = $vDomains ? QAuxcodes::findFirst([
+            "conditions" => "id = :id: AND domain_uuid = :domain_uuid:",
+            "bind" => ["id" => $auxId, "domain_uuid" => $vDomains->domain_uuid],
+            "bindTypes" => ["id" => Column::BIND_PARAM_INT, "domain_uuid" => Column::BIND_PARAM_STR],
+        ]) : null;
+        $userUuid = $vExtension && $vExtension->vExtensionUsers ? (string) $vExtension->vExtensionUsers->user_uuid : "";
+        if (!$vExtension || !$qAuxcode || $userUuid === "") {
+            return $this->response->setStatusCode(404, "Not Found")->setContent(json_encode(["result" => "error", "message" => "unknown extension or aux code"]));
+        }
+        $extension = (string) $vExtension->extension;
+        $status = ucwords((string) $qAuxcode->auxcode_status);
+        $vUser = VUsers::findFirst([
+            "conditions" => "user_uuid = :user_uuid:",
+            "bind" => ["user_uuid" => $userUuid],
+            "bindTypes" => [Column::BIND_PARAM_STR],
+        ]);
+        $qAuxcodesList = new QAuxcodesList();
+        $qAuxcodesList->auxcode_uuid = $qAuxcode->auxcode_uuid;
+        $qAuxcodesList->domain_uuid = $vDomains->domain_uuid;
+        $qAuxcodesList->auxcode_status = $status;
+        $qAuxcodesList->insert_date = date("Y-m-d H:i:s P");
+        $qAuxcodesList->user_uuid = $userUuid;
+        $qAuxcodesList->username = $vUser && $vUser->qUsers ? trim($vUser->qUsers->first_name . " " . $vUser->qUsers->last_name) : $extension;
+        $qAuxcodesList->extension = $extension . " | 0";
+        if (!$qAuxcodesList->create()) {
+            return $this->response->setStatusCode(500, "Error")->setContent(json_encode(["result" => "error", "message" => "could not save"]));
+        }
+        $this->redis->set($extension . "-" . $vDomains->domain_name . "-auxcode", $qAuxcode->auxcode_uuid);
+        $vCallCenterAgents = VCallCenterAgents::find([
+            "conditions" => "user_uuid = :user_uuid: AND domain_uuid = :domain_uuid: AND queue_extension IS NOT NULL",
+            "bind" => ["user_uuid" => $userUuid, "domain_uuid" => $vDomains->domain_uuid],
+            "bindTypes" => ["user_uuid" => Column::BIND_PARAM_STR, "domain_uuid" => Column::BIND_PARAM_STR],
+        ]);
+        foreach ($vCallCenterAgents as $vCallCenterAgent) {
+            $vCallCenterAgent->agent_status = $status;
+            $vCallCenterAgent->update();
+            foreach (["/var/cache/fusionpbx/", "/var/cache/ringq/"] as $dir) {
+                if (file_exists($dir . "configuration.callcenter.conf." . gethostname())) {
+                    unlink($dir . "configuration.callcenter.conf." . gethostname());
+                }
+            }
+            try {
+                $client = new Client(Client::engine(Client::CLIENT_4X, "ws://127.0.0.1:3000", ["persistent" => false]));
+                $client->initialize();
+                $client->emit('agentstatus', ["agentuuid" => $vCallCenterAgent->call_center_agent_uuid, "aux_uuid" => $qAuxcode->auxcode_uuid, "extension" => $extension, "status" => $status != "Available" ? "On Break" : "Available", "subdomain" => $vDomains->domain_name, "auxcode" => $status, "queue_extension" => "0"]);
+            } catch (\Throwable $e) {
+                error_log("deskAux emit: " . $e->getMessage());
+            }
+        }
+        return $this->response->setStatusCode(200, "OK")->setContent(json_encode(["result" => "success", "status" => $status]));
+    }
+

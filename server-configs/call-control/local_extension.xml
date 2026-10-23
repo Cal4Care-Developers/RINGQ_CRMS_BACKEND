@@ -1,0 +1,65 @@
+
+<extension name="local_extension" continue="true" uuid="1c4b0b2f-9b88-4f4f-b5f5-f50bb73552f9">
+    <condition field="${user_exists}" expression="true">
+        <action application="export" data="dialed_extension=${destination_number}" inline="true"/>
+        <action application="limit" data="hash ${domain_name} ${destination_number} ${limit_max} ${limit_destination}" inline="false"/>
+    </condition>
+    <condition field="${caller_id_number}" expression="^[a-f0-9]{20}$" break="on-true">
+        <action application="set" data="ringback=${us-ring}"/>
+        <action application="ring_ready"/>
+        <action application="sleep" data="1000"/>
+        <action application="set" data="hangup_after_bridge=false"/>
+        <action application="set" data="park_after_bridge=false"/>
+        <action application="set" data="auto_hangup=false"/>
+        <action application="set" data="transfer_after_bridge=false"/>
+        <action application="set" data="inherit_codec=true"/>
+        <action application="set" data="continue_on_fail=true"/>
+        <action application="set" data="initial_callee_id_name=${user_data(${dialed_extension}@${domain_name} var effective_caller_id_name)}"/>
+        <action application="set" data="initial_callee_id_number=${user_data(${dialed_extension}@${domain_name} attr number-alias)}"/> <!-- [desk-display] caller's phone shows the extension, not its SIP user -->
+        <action application="export" data="nolocal:origination_callee_id_name=${initial_callee_id_name}"/>
+        <action application="export" data="nolocal:origination_callee_id_number=${initial_callee_id_number}"/>
+        <action application="hash" data="insert/${domain_name}-call_return/${dialed_extension}/${caller_id_number}"/>
+        <action application="hash" data="insert/${domain_name}-last_dial_ext/${dialed_extension}/${uuid}"/>
+        <action application="set" data="called_party_call_group=${user_data(${dialed_extension}@${domain_name} var call_group)}"/>
+        <action application="hash" data="insert/${domain_name}-last_dial/${called_party_call_group}/${uuid}"/>
+        <action application="set" data="api_hangup_hook=lua app.lua hangup"/>
+        <action application="export" data="domain_name=${domain_name}"/>
+        <action application="lua" data="ringq_call_control.lua screen"/> <!-- [ringq-call-control] call screening -->
+        <action application="bridge" data="user/${destination_number}@${domain_name}${user_data ${destination_number}@${domain_name} var simultaneous_destination}${rq_parallel}"/>
+        <action application="bridge" data="${user_data ${destination_number}@${domain_name} var follow_internal}"/>
+        <action application="bridge" data="${user_data ${destination_number}@${domain_name} var follow_internal2}"/>
+        <action application="bridge" data="${user_data ${destination_number}@${domain_name} var follow_internal3}"/>
+        <action application="unset" data="nolocal:origination_callee_id_name"/> <!-- [desk-display] relay targets show their own -->
+        <action application="unset" data="nolocal:origination_callee_id_number"/>
+        <action application="lua" data="ringq_call_control.lua failover"/> <!-- [ringq-call-control] relay / on busy / no answer -->
+        <action application="answer"/>
+        <!-- <action application="lua" data="app.lua failure_handler"/> -->
+    </condition>
+    <condition field="" expression="">
+        <action application="set" data="ringback=${us-ring}"/>
+        <action application="ring_ready"/>
+        <action application="sleep" data="1000"/>
+        <action application="set" data="hangup_after_bridge=false"/>
+        <action application="set" data="park_after_bridge=false"/>
+        <action application="set" data="auto_hangup=false"/>
+        <action application="set" data="transfer_after_bridge=false"/>
+        <action application="set" data="inherit_codec=true"/>
+        <action application="set" data="continue_on_fail=true"/>
+        <action application="set" data="continue_on_fail=true"/>
+        <action application="set" data="initial_callee_id_name=${user_data(${dialed_extension}@${domain_name} var effective_caller_id_name)}"/>
+        <action application="hash" data="insert/${domain_name}-call_return/${dialed_extension}/${caller_id_number}"/>
+        <action application="hash" data="insert/${domain_name}-last_dial_ext/${dialed_extension}/${uuid}"/>
+        <action application="set" data="called_party_call_group=${user_data(${dialed_extension}@${domain_name} var call_group)}"/>
+        <action application="hash" data="insert/${domain_name}-last_dial/${called_party_call_group}/${uuid}"/>
+        <action application="set" data="api_hangup_hook=lua app.lua hangup"/>
+        <action application="export" data="domain_name=${domain_name}"/>
+        <action application="lua" data="ringq_call_control.lua screen"/> <!-- [ringq-call-control] call screening -->
+        <action application="bridge" data="user/${destination_number}@${domain_name}${user_data ${destination_number}@${domain_name} var simultaneous_destination2}${rq_parallel}"/>
+        <action application="bridge" data="${user_data ${destination_number}@${domain_name} var follow_external}"/>
+        <action application="bridge" data="${user_data ${destination_number}@${domain_name} var follow_external2}"/>
+        <action application="bridge" data="${user_data ${destination_number}@${domain_name} var follow_external3}"/>
+        <action application="lua" data="ringq_call_control.lua failover"/> <!-- [ringq-call-control] relay / on busy / no answer -->
+        <action application="answer"/>
+        <!-- <action application="lua" data="app.lua failure_handler"/> -->
+    </condition>
+</extension>

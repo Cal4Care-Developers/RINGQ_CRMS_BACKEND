@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Call Detail Record PHP Script every 5 seconds
+
+[Timer]
+OnBootSec=5
+OnUnitActiveSec=5s
+AccuracySec=1s
+Unit=calldetailrecord.service
+
+[Install]
+WantedBy=timers.target

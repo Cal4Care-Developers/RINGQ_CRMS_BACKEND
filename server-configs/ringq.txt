@@ -1,0 +1,708 @@
+server {
+    if ($ringq_block_tools) { return 404; }
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+    add_header Content-Disposition $ringq_upload_disposition always;
+    add_header X-Frame-Options $ringq_frame_options always;
+    add_header Permissions-Policy "camera=(self), microphone=(self), geolocation=()" always;
+    add_header Content-Security-Policy-Report-Only $ringq_csp_report_only always;
+	listen 127.0.0.1:80;
+	server_name 127.0.0.1;
+	access_log /var/log/nginx/access.log;
+	error_log /var/log/nginx/error.log;
+
+	client_max_body_size 100G;
+	client_body_buffer_size 128k;
+
+	location / {
+		root /var/www/webapp;
+		index index.php;
+	}
+
+	location ~ \.php$ {
+		fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+		#fastcgi_pass 127.0.0.1:9000;
+		fastcgi_index index.php;
+		include fastcgi_params;
+		fastcgi_param   SCRIPT_FILENAME /var/www/webapp$fastcgi_script_name;
+	}
+
+	# Allow the upgrade routines to run longer than normal
+	location = /core/upgrade/index.php {
+		fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+		#fastcgi_pass 127.0.0.1:9000;
+		fastcgi_read_timeout 15m;
+		fastcgi_index index.php;
+		include fastcgi_params;
+		fastcgi_param   SCRIPT_FILENAME /var/www/webapp$fastcgi_script_name;
+	}
+
+	# Disable viewing .htaccess & .htpassword & .db & .git
+	location ~ .htaccess {
+		deny all;
+	}
+	location ~ .htpassword {
+		deny all;
+	}
+	location ~^.+.(db)$ {
+		deny all;
+	}
+	location ~ /\.git {
+		deny all;
+	}
+	location ~ /\.lua {
+		deny all;
+	}
+	location ~ /\. {
+		deny all;
+	}
+}
+
+server {
+    if ($ringq_block_tools) { return 404; }
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+    add_header Content-Disposition $ringq_upload_disposition always;
+    add_header X-Frame-Options $ringq_frame_options always;
+    add_header Permissions-Policy "camera=(self), microphone=(self), geolocation=()" always;
+    add_header Content-Security-Policy-Report-Only $ringq_csp_report_only always;
+	listen [::]:80;
+	listen 80;
+	server_name ringq;
+
+	#redirect letsencrypt to dehydrated
+	location ^~ /.well-known/acme-challenge {
+		default_type "text/plain";
+		auth_basic "off";
+		alias /var/www/dehydrated;
+	}
+
+	# RingQ local-LAN auto provisioning: phones on the customer LAN fetch their config from
+	# http://<server-LAN-IP>/provision/<tenant-key>/[<mac>.cfg] (plain http -- the TLS certificate is
+	# for the FQDN, not the IP). Private source addresses only, so configs (they carry SIP
+	# passwords) are never served in clear text to the internet.
+	location ~ "^/provision/[0-9A-Fa-f]{12}(/|$)" {
+		allow 10.0.0.0/8;
+		allow 172.16.0.0/12;
+		allow 192.168.0.0/16;
+		allow 127.0.0.1;
+		deny all;
+		include fastcgi_params;
+		fastcgi_param SCRIPT_FILENAME /var/www/ringq/public/index.php;
+		fastcgi_pass unix:/var/run/php/php7.4-fpm.sock;
+	}
+
+	#rewrite rule - send to https with an exception for provisioning
+	if ($uri !~* ^.*(provision|xml_cdr|firmware).*$) {
+		rewrite ^(.*) https://$host$1 permanent;
+		break;
+	}
+
+	#REST api
+	# Exclude /meet/ — the versioned Meet control plane and guest links are
+	# handled by the HTTPS vhost. This server-level rewrite runs BEFORE
+	# location matching, so without the negative lookahead it rewrites
+	# /meet/api/rooms to /meet/api/index.php and the meet API 404s.
+	if ($uri ~* ^(?!/meet/).*/api/.*$) {
+		rewrite ^(.*)/api/(.*)$ $1/api/index.php?rewrite_uri=$2 last;
+		break;
+	}
+
+	#algo
+	rewrite "^.*/provision/algom([A-Fa-f0-9]{12})\.conf" /app/provision/?mac=$1&file=algom%7b%24mac%7d.conf last;
+
+	#mitel
+	rewrite "^.*/provision/MN_([A-Fa-f0-9]{12})\.cfg" /app/provision/index.php?mac=$1&file=MN_%7b%24mac%7d.cfg last;
+	rewrite "^.*/provision/MN_Generic.cfg" /app/provision/index.php?mac=08000f000000&file=MN_Generic.cfg last;
+
+	#grandstream
+	rewrite "^.*/provision/cfg([A-Fa-f0-9]{12})(\.(xml|cfg))?$" /app/provision/?mac=$1;
+	rewrite "^.*/provision/([A-Fa-f0-9]{12})/phonebook\.xml$" /app/provision/?mac=$1&file=phonebook.xml;
+	rewrite "^.*/provision/(phonebook\.xml)?$" /app/provision/index.php?file=$1 last;
+	#grandstream-wave softphone by ext because Android doesn't pass MAC.
+	rewrite "^.*/provision/([0-9]{5})/cfg([A-Fa-f0-9]{12}).xml$" /app/provision/?ext=$1;
+
+	#aastra
+	rewrite "^.*/provision/aastra.cfg$" /app/provision/?mac=$1&file=aastra.cfg;
+	#rewrite "^.*/provision/([A-Fa-f0-9]{12})(\.(cfg))?$" /app/provision/?mac=$1 last;
+
+	#yealink
+	#rewrite "^.*/provision/(y[0-9]{12})(\.cfg|\.boot)?$" /app/provision/index.php?file=$1$2;
+	rewrite "^.*/provision/(y[0-9]{12})(\.cfg)?$" /app/provision/index.php?file=$1.cfg;
+	rewrite "^.*/provision/([A-Fa-f0-9]{12})(\.(xml|cfg))?$" /app/provision/index.php?mac=$1 last;
+
+	#polycom
+	rewrite "^.*/provision/000000000000.cfg$" "/app/provision/?mac=$1&file={%24mac}.cfg";
+	#rewrite "^.*/provision/sip_330(\.(ld))$" /includes/firmware/sip_330.$2;
+	rewrite "^.*/provision/features.cfg$" /app/provision/?mac=$1&file=features.cfg;
+	rewrite "^.*/provision/([A-Fa-f0-9]{12})-sip.cfg$" /app/provision/?mac=$1&file=sip.cfg;
+	rewrite "^.*/provision/([A-Fa-f0-9]{12})-phone.cfg$" /app/provision/?mac=$1;
+	rewrite "^.*/provision/([A-Fa-f0-9]{12})-registration.cfg$" "/app/provision/?mac=$1&file={%24mac}-registration.cfg";
+	rewrite "^.*/provision/([A-Fa-f0-9]{12})-directory.xml$" "/app/provision/?mac=$1&file={%24mac}-directory.xml";
+
+	#cisco
+	rewrite "^.*/provision/file/(.*\.(xml|cfg))" /app/provision/?file=$1 last;
+	rewrite "^.*/provision/directory\.xml$" /app/provision/?file=directory.xml;
+
+	#Escene
+	rewrite "^.*/provision/([0-9]{1,11})_Extern.xml$"       "/app/provision/?ext=$1&file={%24mac}_extern.xml" last;
+	rewrite "^.*/provision/([0-9]{1,11})_Phonebook.xml$"    "/app/provision/?ext=$1&file={%24mac}_phonebook.xml" last;
+
+	#Vtech
+	rewrite "^.*/provision/VCS754_([A-Fa-f0-9]{12})\.cfg$" /app/provision/?mac=$1;
+	rewrite "^.*/provision/pb([A-Fa-f0-9-]{12,17})/directory\.xml$" /app/provision/?mac=$1&file=directory.xml;
+
+	#Digium
+	rewrite "^.*/provision/([A-Fa-f0-9]{12})-contacts\.cfg$" "/app/provision/?mac=$1&file={%24mac}-contacts.cfg";
+	rewrite "^.*/provision/([A-Fa-f0-9]{12})-smartblf\.cfg$" "/app/provision/?mac=$1&file={%24mac}-smartblf.cfg";
+
+	#Snom
+	rewrite "^.*/provision/-([A-Fa-f0-9]{12})?$" /app/provision/index.php?mac=$1;
+
+	access_log /var/log/nginx/access.log;
+	error_log /var/log/nginx/error.log;
+
+	client_max_body_size 100G;
+	client_body_buffer_size 128k;
+
+	location / {
+		root /var/www/webapp;
+		index index.php index.html;
+	}
+
+	location ~ \.php$ {
+		fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+		#fastcgi_pass 127.0.0.1:9000;
+		fastcgi_read_timeout 15m;
+		fastcgi_index index.php;
+		include fastcgi_params;
+		fastcgi_param   SCRIPT_FILENAME /var/www/webapp$fastcgi_script_name;
+	}
+
+	# Allow the upgrade routines to run longer than normal
+	location = /core/upgrade/index.php {
+		fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+		#fastcgi_pass 127.0.0.1:9000;
+		fastcgi_read_timeout 15m;
+		fastcgi_index index.php;
+		include fastcgi_params;
+		fastcgi_param   SCRIPT_FILENAME /var/www/webapp$fastcgi_script_name;
+	}
+
+	# Disable viewing .htaccess & .htpassword & .db & .git
+	location ~ .htaccess {
+		deny all;
+	}
+	location ~ .htpassword {
+		deny all;
+	}
+	location ~^.+.(db)$ {
+		deny all;
+	}
+	location ~ /\.git {
+		deny all;
+	}
+	location ~ /\.lua {
+		deny all;
+	}
+	location ~ /\. {
+		deny all;
+	}
+}
+
+server {
+    if ($ringq_block_tools) { return 404; }
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+    add_header Content-Disposition $ringq_upload_disposition always;
+    add_header X-Frame-Options $ringq_frame_options always;
+    add_header Permissions-Policy "camera=(self), microphone=(self), geolocation=()" always;
+    add_header Content-Security-Policy-Report-Only $ringq_csp_report_only always;
+	listen [::]:443 ssl http2;
+	listen 443 ssl;
+	#listen 443 ssl http2;
+	server_name ringq;
+
+	ssl_certificate /etc/letsencrypt/live/ssl.ringq.ai/fullchain.pem;
+	ssl_certificate_key /etc/letsencrypt/live/ssl.ringq.ai/privkey.pem;
+	#ssl_protocols           TLSv1.2 TLSv1.3;
+	ssl_protocols	        TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
+	ssl_prefer_server_ciphers on;
+	ssl_ciphers             ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-SHA:AES256-SHA;
+	ssl_session_cache       shared:SSL:40m;
+	ssl_session_timeout     2h;
+	ssl_session_tickets     off;
+	# This wildcard include is intentionally optional. Production provisioning
+	# installs a server-context snippet here containing:
+	#   ssl_client_certificate /etc/ringq/pki/sfu-gateway-ca.pem;
+	#   ssl_verify_client optional;
+	# With no trusted CA configured, $ssl_client_verify is NONE and the callback
+	# location below remains fail-closed.
+	include /etc/nginx/ringq-meet-mtls-enabled/*.conf;
+
+	# nginx cache retrofit: long-cache fonts/images/media (css/js stay no-cache below)
+	location ~* \.(?:woff2?|ttf|otf|eot|svg|svgz|ico|cur|gif|jpe?g|png|webp|bmp|mp4|webm|ogg|ogv|mp3|wav|flac|pdf)$ {
+	    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+	    add_header X-Content-Type-Options nosniff always;
+	    add_header Referrer-Policy strict-origin-when-cross-origin always;
+	    add_header X-Robots-Tag "noindex, nofollow" always;
+	    add_header Content-Disposition $ringq_upload_disposition always;
+	    add_header X-Frame-Options $ringq_frame_options always;
+	    add_header Permissions-Policy "camera=(self), microphone=(self), geolocation=()" always;
+	    add_header Content-Security-Policy-Report-Only $ringq_csp_report_only always;
+		root          /var/www/webapp;
+		expires       30d;
+		add_header    Cache-Control "public" always;
+		access_log    off;
+		log_not_found off;
+	}
+
+	#redirect letsencrypt to dehydrated
+	location ^~ /.well-known/acme-challenge {
+		default_type "text/plain";
+		auth_basic "off";
+		alias /var/www/dehydrated;
+	}
+
+	#REST api
+	# Exclude /meet/ — the versioned Meet control plane and guest links are
+	# handled below. This server-level rewrite runs BEFORE
+	# location matching, so without the negative lookahead it rewrites
+	# /meet/api/rooms to /meet/api/index.php and the meet API 404s.
+	if ($uri ~* ^(?!/meet/).*/api/.*$) {
+		rewrite ^(.*)/api/(.*)$ $1/api/index.php?rewrite_uri=$2 last;
+		break;
+	}
+
+	#message media
+	rewrite "^/app/messages/media/(.*)/(.*)" /app/messages/message_media.php?id=$1&action=download last;
+
+	#algo
+	rewrite "^.*/provision/algom([A-Fa-f0-9]{12})\.conf" /app/provision/?mac=$1&file=algom%7b%24mac%7d.conf last;
+
+	#mitel
+	rewrite "^.*/provision/MN_([A-Fa-f0-9]{12})\.cfg" /app/provision/index.php?mac=$1&file=MN_%7b%24mac%7d.cfg last;
+	rewrite "^.*/provision/MN_Generic.cfg" /app/provision/index.php?mac=08000f000000&file=MN_Generic.cfg last;
+
+	#grandstream
+	rewrite "^.*/provision/cfg([A-Fa-f0-9]{12})(\.(xml|cfg))?$" /app/provision/?mac=$1;
+	rewrite "^.*/provision/([A-Fa-f0-9]{12})/phonebook\.xml$" /app/provision/?mac=$1&file=phonebook.xml;
+	rewrite "^.*/provision/(phonebook\.xml)?$" /app/provision/index.php?file=$1 last;
+	#grandstream-wave softphone by ext because Android doesn't pass MAC.
+	rewrite "^.*/provision/([0-9]{5})/cfg([A-Fa-f0-9]{12}).xml$" /app/provision/?ext=$1;
+
+	#aastra
+	rewrite "^.*/provision/aastra.cfg$" /app/provision/?mac=$1&file=aastra.cfg;
+	#rewrite "^.*/provision/([A-Fa-f0-9]{12})(\.(cfg))?$" /app/provision/?mac=$1 last;
+
+	#yealink
+	#rewrite "^.*/provision/(y[0-9]{12})(\.cfg|\.boot)?$" /app/provision/index.php?file=$1$2;
+	rewrite "^.*/provision/(y[0-9]{12})(\.cfg)?$" /app/provision/index.php?file=$1.cfg;
+	rewrite "^.*/provision/([A-Fa-f0-9]{12})(\.(xml|cfg))?$" /app/provision/index.php?mac=$1 last;
+
+	#polycom
+	rewrite "^.*/provision/000000000000.cfg$" "/app/provision/?mac=$1&file={%24mac}.cfg";
+	#rewrite "^.*/provision/sip_330(\.(ld))$" /includes/firmware/sip_330.$2;
+	rewrite "^.*/provision/features.cfg$" /app/provision/?mac=$1&file=features.cfg;
+	rewrite "^.*/provision/([A-Fa-f0-9]{12})-sip.cfg$" /app/provision/?mac=$1&file=sip.cfg;
+	rewrite "^.*/provision/([A-Fa-f0-9]{12})-phone.cfg$" /app/provision/?mac=$1;
+	rewrite "^.*/provision/([A-Fa-f0-9]{12})-registration.cfg$" "/app/provision/?mac=$1&file={%24mac}-registration.cfg";
+	rewrite "^.*/provision/([A-Fa-f0-9]{12})-directory.xml$" "/app/provision/?mac=$1&file={%24mac}-directory.xml";
+
+	#cisco
+	rewrite "^.*/provision/file/(.*\.(xml|cfg))" /app/provision/?file=$1 last;
+	rewrite "^.*/provision/directory\.xml$" /app/provision/?file=directory.xml;
+
+	#Escene
+	rewrite "^.*/provision/([0-9]{1,11})_Extern.xml$"       "/app/provision/?ext=$1&file={%24mac}_extern.xml" last;
+	rewrite "^.*/provision/([0-9]{1,11})_Phonebook.xml$"    "/app/provision/?ext=$1&file={%24mac}_phonebook.xml" last;
+
+	#Vtech
+	rewrite "^.*/provision/VCS754_([A-Fa-f0-9]{12})\.cfg$" /app/provision/?mac=$1;
+	rewrite "^.*/provision/pb([A-Fa-f0-9-]{12,17})/directory\.xml$" /app/provision/?mac=$1&file=directory.xml;
+
+	#Digium
+	rewrite "^.*/provision/([A-Fa-f0-9]{12})-contacts\.cfg$" "/app/provision/?mac=$1&file={%24mac}-contacts.cfg";
+	rewrite "^.*/provision/([A-Fa-f0-9]{12})-smartblf\.cfg$" "/app/provision/?mac=$1&file={%24mac}-smartblf.cfg";
+
+	access_log /var/log/nginx/access.log;
+	error_log /var/log/nginx/error.log;
+
+	client_max_body_size 100G;
+	client_body_buffer_size 128k;
+
+	# Flutter 1-day cache optimization is paused for now.
+	location ~* \.(?:css|js)$ {
+	    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+	    add_header X-Content-Type-Options nosniff always;
+	    add_header Referrer-Policy strict-origin-when-cross-origin always;
+	    add_header X-Robots-Tag "noindex, nofollow" always;
+	    add_header Content-Disposition $ringq_upload_disposition always;
+	    add_header X-Frame-Options $ringq_frame_options always;
+	    add_header Permissions-Policy "camera=(self), microphone=(self), geolocation=()" always;
+	    add_header Content-Security-Policy-Report-Only $ringq_csp_report_only always;
+        root /var/www/webapp;
+        gzip_vary on;
+        expires -1;
+        add_header Cache-Control "no-cache, public, must-revalidate";
+        access_log off;
+        log_not_found off;
+    }
+
+    # BEGIN RINGQ MEET V1
+    gzip on;
+    gzip_static on;
+    gzip_vary on;
+    gzip_types application/javascript text/javascript application/json text/css application/wasm image/svg+xml;
+
+    # Same-origin browser session exchange. Keep the remainder of /meetApi on
+    # the authenticated RingQ backend and expose only this exact action on 443.
+    location = /meetApi/accessToken {
+        proxy_pass https://127.0.0.1:8443;
+        proxy_ssl_server_name on;
+        proxy_ssl_name $host;
+        proxy_ssl_verify off;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Authorization "";
+        proxy_read_timeout 15s;
+        proxy_buffering off;
+        client_max_body_size 4k;
+    }
+
+    # External schedules API (HMAC, machine-to-machine).
+    #
+    # It lives inside the Meet marker block because that block is what the
+    # updater rewrites on every run. A second marker pair would not be found on
+    # an already-deployed host, so its routes would be *appended* beside the
+    # ones already there and nginx would refuse to start on the duplicate.
+    #
+    # proxy_pass carries a trailing URI, so nginx REPLACES the matched prefix:
+    # /scheduleApi/v1/schedules/abc reaches Phalcon as
+    # /scheduleApi/schedules/abc -> ScheduleApiController::schedulesAction.
+    # This is the deliberate opposite of `location /meet/api/v1/` below, which
+    # has no trailing URI and therefore proxies its prefix intact.
+    #
+    # The path must never be spelled /schedule/api/v1/. The server-level
+    # FusionPBX rewrite above matches any URI containing /api/ and would send
+    # it to index.php; /scheduleApi/ has no slash before "api", so that rule
+    # cannot see it.
+    location ^~ /scheduleApi/v1/ {
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        add_header Content-Disposition $ringq_upload_disposition always;
+        add_header X-Frame-Options $ringq_frame_options always;
+        add_header Permissions-Policy "camera=(self), microphone=(self), geolocation=()" always;
+        add_header Content-Security-Policy-Report-Only $ringq_csp_report_only always;
+        proxy_pass https://127.0.0.1:8443/scheduleApi/;
+        proxy_ssl_server_name on;
+        proxy_ssl_name $host;
+        proxy_ssl_verify off;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 30s;
+        proxy_buffering off;
+        client_max_body_size 64k;
+        # 8443 answers every origin with Access-Control-Allow-Origin
+        # $http_origin AND Allow-Credentials: true. A signed server-to-server
+        # API must not inherit that: it would let any page a tenant user has
+        # open drive this API with their cookies. The CloudApp's own playground
+        # is same-origin and needs no CORS headers at all.
+        proxy_hide_header Access-Control-Allow-Origin;
+        proxy_hide_header Access-Control-Allow-Credentials;
+        proxy_hide_header Access-Control-Allow-Headers;
+        proxy_hide_header Access-Control-Allow-Methods;
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "no-store" always;
+    }
+
+    # RingQ Meet v1 control plane. Port 6000 is loopback-only; nginx is the only
+    # public entry point. Strip the verification header from ordinary requests
+    # so an Internet client cannot impersonate the SFU gateway.
+    location ^~ /meet/api/v1/ {
+        proxy_pass http://127.0.0.1:6000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-RingQ-mTLS-Verified "";
+        proxy_read_timeout 30s;
+        proxy_buffering off;
+        client_max_body_size 64k;
+    }
+
+    # Gateway callbacks are accepted only when nginx verified a certificate
+    # issued by the internal CA. nginx overwrites, rather than forwards, the
+    # verification marker consumed by the loopback control plane.
+    location = /meet/api/v1/gateway/events {
+        if ($ssl_client_verify != SUCCESS) { return 403; }
+        proxy_pass http://127.0.0.1:6000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-RingQ-mTLS-Verified $ssl_client_verify;
+        client_max_body_size 64k;
+    }
+
+    # Guest meeting links: https://{tenant}/meet/m/{code} -> the guest client.
+    # Served from the tenant's own domain and certificate, so a guest never sees
+    # a third-party host.
+    # Click2Talk guest links: https://{tenant}/click2talk/{id} -> the guest client.
+    #
+    # The id is a PATH segment, so this block has to serve the app's own assets as
+    # well. `try_files $uri` first means a real file still wins and only a path
+    # that matches nothing falls back to the app, which reads the id itself.
+    # Consequence accepted: a genuinely missing asset under /click2talk/ returns
+    # index.html with 200 rather than 404, which is ordinary SPA behaviour.
+    #
+    # Legacy ?username=&type=&share= links keep working: they resolve to
+    # /click2talk/ itself, which is a real directory and matches `try_files $uri`.
+    location ^~ /click2talk/ {
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        add_header Content-Disposition $ringq_upload_disposition always;
+        add_header X-Frame-Options $ringq_frame_options always;
+        add_header Permissions-Policy "camera=(self), microphone=(self), geolocation=()" always;
+        add_header Content-Security-Policy-Report-Only $ringq_csp_report_only always;
+        root /var/www/webapp;
+        try_files $uri $uri/ /click2talk/index.html;
+        add_header Cache-Control "no-store" always;
+    }
+
+    # Boutique Hotel guest links: https://{tenant}/hotel/?k={token} -> the
+    # guest room-phone page (ringq_react_app guest-hotel/, built to
+    # /var/www/webapp/hotel). Same SPA fallback pattern as /click2talk/.
+    location ^~ /hotel/ {
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy no-referrer always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        add_header X-Frame-Options $ringq_frame_options always;
+        add_header Permissions-Policy "camera=(), microphone=(self), geolocation=()" always;
+        root /var/www/webapp;
+        try_files $uri $uri/ /hotel/index.html;
+        add_header Cache-Control "no-store" always;
+    }
+
+
+    # Support access (MCP). The engineer's assistant speaks MCP here; the node
+    # adapter on 6095 translates it and McpController decides everything.
+    #
+    # No CORS headers: :8443 answers every origin with Allow-Origin $http_origin
+    # AND Allow-Credentials, and a bearer-authenticated support endpoint must
+    # not inherit that. Nothing in a browser should be able to drive this.
+    location = /mcp {
+        proxy_pass http://127.0.0.1:6095;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 60s;
+        proxy_buffering off;
+        client_max_body_size 256k;
+        proxy_hide_header Access-Control-Allow-Origin;
+        proxy_hide_header Access-Control-Allow-Credentials;
+        proxy_hide_header Access-Control-Allow-Headers;
+        proxy_hide_header Access-Control-Allow-Methods;
+        add_header Cache-Control "no-store" always;
+    }
+
+    location = /mcp/account {
+        proxy_pass http://127.0.0.1:6095;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 60s;
+        proxy_buffering off;
+        client_max_body_size 256k;
+        proxy_hide_header Access-Control-Allow-Origin;
+        proxy_hide_header Access-Control-Allow-Credentials;
+        proxy_hide_header Access-Control-Allow-Headers;
+        proxy_hide_header Access-Control-Allow-Methods;
+        add_header Cache-Control "no-store" always;
+    }
+
+    location ^~ /.well-known/oauth-authorization-server {
+        proxy_pass https://127.0.0.1:8443/oauth/metadata;
+        proxy_ssl_server_name on;
+        proxy_ssl_name $host;
+        proxy_ssl_verify off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_hide_header Access-Control-Allow-Origin;
+        proxy_hide_header Access-Control-Allow-Credentials;
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header Cache-Control "no-store" always;
+    }
+
+    location ^~ /.well-known/oauth-protected-resource {
+        proxy_pass https://127.0.0.1:8443/oauth/resource;
+        proxy_ssl_server_name on;
+        proxy_ssl_name $host;
+        proxy_ssl_verify off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_hide_header Access-Control-Allow-Origin;
+        proxy_hide_header Access-Control-Allow-Credentials;
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header Cache-Control "no-store" always;
+    }
+
+    location ^~ /oauth/ {
+        if ($request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin "*" always;
+            add_header Access-Control-Allow-Methods "GET, POST, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "Content-Type, Authorization" always;
+            add_header Access-Control-Max-Age 86400 always;
+            return 204;
+        }
+        proxy_pass https://127.0.0.1:8443;
+        proxy_ssl_server_name on;
+        proxy_ssl_name $host;
+        proxy_ssl_verify off;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        client_max_body_size 64k;
+        proxy_hide_header Access-Control-Allow-Origin;
+        proxy_hide_header Access-Control-Allow-Credentials;
+        proxy_hide_header Access-Control-Allow-Headers;
+        proxy_hide_header Access-Control-Allow-Methods;
+        add_header Access-Control-Allow-Origin "*" always;
+    }
+
+    location ^~ /meet/m/ {
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        add_header Content-Disposition $ringq_upload_disposition always;
+        add_header X-Frame-Options $ringq_frame_options always;
+        add_header Permissions-Policy "camera=(self), microphone=(self), geolocation=()" always;
+        add_header Content-Security-Policy-Report-Only $ringq_csp_report_only always;
+        root /var/www/webapp;
+        try_files /meet/index.html =404;
+        add_header Cache-Control "no-store" always;
+    }
+
+    location = /meet { return 308 /meet/; }
+    location = /meet/ {
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        add_header Content-Disposition $ringq_upload_disposition always;
+        add_header X-Frame-Options $ringq_frame_options always;
+        add_header Permissions-Policy "camera=(self), microphone=(self), geolocation=()" always;
+        add_header Content-Security-Policy-Report-Only $ringq_csp_report_only always;
+        root /var/www/webapp;
+        try_files /meet/index.html =404;
+        add_header Cache-Control "no-store" always;
+    }
+
+    # The lightweight Flutter guest client replaces the legacy frontend at
+    # /var/www/webapp/meet. API and share-link locations above win by their
+    # longer or exact matches.
+    location ^~ /meet/ {
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        add_header Content-Disposition $ringq_upload_disposition always;
+        add_header X-Frame-Options $ringq_frame_options always;
+        add_header Permissions-Policy "camera=(self), microphone=(self), geolocation=()" always;
+        add_header Content-Security-Policy-Report-Only $ringq_csp_report_only always;
+        root /var/www/webapp;
+        try_files $uri =404;
+        add_header Cache-Control "no-cache, public, must-revalidate" always;
+    }
+
+    # The retired direct relay remains unavailable.
+    location ^~ /rtc { return 410; }
+    # END RINGQ MEET V1
+
+	location / {
+		root /var/www/webapp;
+		index index.php index.html;
+	}
+
+
+	location ^~ /sbc/ {
+		proxy_pass https://127.0.0.1:8443/;
+
+		proxy_ssl_server_name on;
+		proxy_ssl_verify off;
+
+		proxy_set_header Host $host;
+		proxy_set_header X-Real-IP $remote_addr;
+		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+		proxy_set_header X-Forwarded-Proto https;
+
+		proxy_redirect off;
+	}
+
+	location ~ \.php$ {
+		fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+		#fastcgi_pass 127.0.0.1:9000;
+		fastcgi_read_timeout 15m;
+		fastcgi_index index.php;
+		include fastcgi_params;
+		fastcgi_param   SCRIPT_FILENAME /var/www/webapp$fastcgi_script_name;
+	}
+
+	# Allow the upgrade routines to run longer than normal
+	location = /core/upgrade/index.php {
+		fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+		#fastcgi_pass 127.0.0.1:9000;
+		fastcgi_read_timeout 15m;
+		fastcgi_index index.php;
+		include fastcgi_params;
+		fastcgi_param   SCRIPT_FILENAME /var/www/webapp$fastcgi_script_name;
+	}
+
+	# Disable viewing .htaccess & .htpassword & .db & .git
+	location ~ .htaccess {
+		deny all;
+	}
+	location ~ .htpassword {
+		deny all;
+	}
+	location ~^.+.(db)$ {
+		deny all;
+	}
+	location ~ /\.git {
+		deny all;
+	}
+	location ~ /\.lua {
+		deny all;
+	}
+	location ~ /\. {
+		deny all;
+	}
+} 

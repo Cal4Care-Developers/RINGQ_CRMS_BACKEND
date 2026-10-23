@@ -1,0 +1,6 @@
+{
+  "releaseVersion": "1.0.0-tenant.49",
+  "apiVersion": "v1",
+  "compatibleApiVersions": ["v1"],
+  "nodeMajor": 24
+}

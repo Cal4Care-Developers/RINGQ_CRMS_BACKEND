@@ -1,0 +1,24 @@
+<extension name="ringq-gateway-inbound" continue="false" uuid="f4cb63cb-f200-4869-a4b6-55dec60b504a">
+    <!-- [gateway-inbound] a registered gateway (extension 100000-199999) signs in like an extension,
+         so a call it brings in from its line hit the outbound rules and went straight back out.
+         Treat it as an incoming call: keep the caller's number from the From display name and
+         route the dialled number (a DID) through the public dialplan. -->
+    <condition field="${gateway_inbound}" expression="^$"/>
+    <condition field="${user_exists}" expression="^false$"/>
+    <condition field="${from_user_exists}" expression="^true$"/>
+    <condition field="${sip_from_user}" expression="^1\d{5}$">
+        <action application="set" data="gateway_inbound=${sip_from_user}" inline="true"/>
+        <action application="export" data="call_direction=inbound" inline="true"/>
+    </condition>
+    <condition field="${sip_from_display}" expression="^(\+?\d+)$" break="never">
+        <action application="set_profile_var" data="caller_id_number=$1"/>
+        <action application="set_profile_var" data="caller_id_name=$1"/>
+        <action application="set" data="effective_caller_id_number=$1"/>
+        <action application="set" data="effective_caller_id_name=$1"/>
+        <action application="set" data="caller_id_number=$1"/>
+        <action application="set" data="caller_id_name=$1"/>
+    </condition>
+    <condition field="destination_number" expression="^(.+)$">
+        <action application="transfer" data="$1 XML public"/>
+    </condition>
+</extension>
