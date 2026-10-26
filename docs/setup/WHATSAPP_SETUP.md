@@ -1,6 +1,8 @@
-# WhatsApp calling setup: step by step
+# RingQ + WhatsApp calling: complete setup guide
 
-This guide connects a **WhatsApp Business number** to RingQ, so that when a customer taps the **call** button in WhatsApp, a RingQ extension, queue or IVR rings. It covers where to find every Meta credential, how to install the RingQ side, how to configure it in RingQ, and how to test it.
+This guide connects a **WhatsApp Business number** to RingQ, so that when a customer taps the **call** button in WhatsApp, a RingQ extension, queue or IVR rings. It covers where to find every Meta credential, how to install the RingQ side, how to configure it in RingQ (with screenshots of every RingQ screen), and what the incoming WhatsApp call looks like in the RingQ dialer.
+
+**Contents:** [Before you start](#before-you-start) · [Part A. Meta credentials](#part-a-get-the-credentials-from-meta) · [Part B. Server install](#part-b-install-the-ringq-side-on-the-server-once-per-server) · [Part C. Configure in RingQ](#part-c-configure-whatsapp-in-ringq) · [Part D. Test call](#part-d-test-with-a-real-call) · [Part E. Change or remove](#part-e-change-move-or-remove) · [Troubleshooting](#troubleshooting) · [Checklist](#checklist)
 
 | | |
 |---|---|
@@ -43,14 +45,14 @@ Keep a text file open and copy each value into it as you go.
 1. In the app, left menu → **WhatsApp** → **API Setup**.
 2. In **Send and receive messages** → **From**, select your **real business number** (add it with **Add phone number** if it is not listed, and finish its verification by SMS or voice).
 3. Under the number, copy:
-   - **Phone number ID** — a long number like `1214061478463577`. This is **not** the phone number.
-   - **WhatsApp Business Account ID** — a long number like `3668511866622780`.
+   - **Phone number ID** — a long number like `123456789012345`. This is **not** the phone number.
+   - **WhatsApp Business Account ID** — a long number like `987654321098765`.
 
 > The **temporary access token** shown on this page expires after **24 hours**. Do not use it in RingQ; create a permanent one in Step A4.
 
 ### Step A3. WhatsApp Business number
 
-The number itself, **with country code, digits only**, for example `6567729965` for +65 6772 9965. It is shown at the top of **API Setup** and in **WhatsApp Manager → Phone numbers**.
+The number itself, **with country code, digits only**, for example `6512345678` for +65 1234 5678. It is shown at the top of **API Setup** and in **WhatsApp Manager → Phone numbers**.
 
 ### Step A4. Permanent access token (System User)
 
@@ -122,39 +124,99 @@ RingQ stores it for webhook signature checks; calling works without it.
 
 ## Part C. Configure WhatsApp in RingQ
 
-1. Sign in to RingQ as an admin → **Settings** → **Integrations** → **Micro apps**.
-2. Click the **WhatsApp** card (next to Telegram). The card shows **Not configured**, **Active**, **Configured**, **Failed** or **Deactivated**.
-3. Open the **Configure** tab and fill in:
+Screenshots in this part are from a live RingQ server. Phone numbers, IDs and names are blurred.
 
-   | Field | Value |
-   |---|---|
-   | Access token | The permanent `EAA…` token (Step A4) |
-   | App secret | Optional (Step A5) |
-   | Phone number ID | Step A2 |
-   | Business account ID | Optional (Step A2) |
-   | WhatsApp Business number | Step A3, with country code |
-   | PBX domain | Filled in with this server's FQDN; leave it |
-   | SIP TLS port | `5061` |
-   | Route calls to | The **extension**, **queue** or **IVR** that should ring |
+### Step C1. Open the WhatsApp card
 
-4. Click **Configure gateway**. RingQ shows each step as it runs (about 30–60 seconds):
-   validate → save credentials (encrypted) → connect to Meta → enable calling → enable SIP → set SDES → get the Meta SIP password → create the gateway → allow Meta IPs → create the DID route → reload → **Gateway active**.
-5. The **Overview** tab now shows **Active**, the number and the destination.
+Sign in to RingQ as an admin. In the left menu click **Global Settings**, then under **Tools** click **Integrations**, and open the **Micro apps** tab.
 
-Tokens are never shown again. To keep the saved token when re-running, leave **Access token** blank.
+![RingQ Global Settings with the Integrations tile under Tools](../images/ringq-01-global-settings.png)
+
+Click the **WhatsApp** card (next to Telegram). The card shows **Not configured**, **Active**, **Configured**, **Failed** or **Deactivated**.
+
+![RingQ Integrations → Micro apps: Microsoft Teams, Telegram and WhatsApp cards](../whatsapp/images/ringq-whatsapp-01-micro-apps.jpg)
+
+The **WhatsApp calling** window has three tabs: **Overview** (status), **Configure** (credentials and routing) and **Manage** (reconfigure or deactivate).
+
+### Step C2. Enter the Meta credentials
+
+Open the **Configure** tab.
+
+![RingQ WhatsApp calling → Configure: access token, app secret, phone number ID, business account ID](../whatsapp/images/ringq-whatsapp-03-configure-credentials.jpg)
+
+| Field | Value |
+|---|---|
+| Access token | The permanent `EAA…` token (Step A4). Once saved it shows *Saved — leave blank to keep*. |
+| App secret | Optional (Step A5) |
+| Phone number ID | Step A2 (the long ID, **not** the phone number) |
+| Business account ID | Optional (Step A2) |
+| WhatsApp Business number | Step A3, with country code |
+
+### Step C3. Choose where calls ring
+
+Scroll down to **RingQ routing**.
+
+![RingQ WhatsApp calling → Configure: WhatsApp Business number, PBX domain, SIP TLS port 5061, Route calls to](../whatsapp/images/ringq-whatsapp-04-configure-routing.jpg)
+
+| Field | Value |
+|---|---|
+| PBX domain | Filled in with this server's FQDN (e.g. `your-server.ringq.ai`); leave it |
+| SIP TLS port | `5061` |
+| Route calls to | The **extension**, **queue** or **IVR** that should ring for WhatsApp calls |
+
+### Step C4. Configure the gateway
+
+Click **Configure gateway**. RingQ shows each step as it runs (about 30–60 seconds):
+
+![RingQ WhatsApp configure steps: validation, credentials saved, Meta API connected, calling enabled, SIP mode, SDES, SIP password, gateway, Meta IP ranges, SIP profile, DID and dialplan, reload, gateway active](../whatsapp/images/ringq-whatsapp-06-configure-steps.jpg)
+
+Every line must have a green tick, ending with **Gateway active ✓** and *WhatsApp gateway configured. Call your WhatsApp Business number to test.* A red line shows Meta's message; see [Troubleshooting](#troubleshooting).
+
+Tokens are never shown again. To keep the saved token when re-running, leave **Access token** blank and click **Re-run configuration**.
+
+### Step C5. Check the status
+
+Open the **Overview** tab and click **Refresh**.
+
+![RingQ WhatsApp calling → Overview: status Active, WhatsApp number, routes to extension, gateway in RingQ Yes, dialplan in RingQ Yes](../whatsapp/images/ringq-whatsapp-07-overview-active.jpg)
+
+| Field | Must show |
+|---|---|
+| Status / State | **Active** |
+| Routes to | The extension, queue or IVR from Step C3 |
+| Gateway in RingQ | **Yes** |
+| Dialplan in RingQ | **Yes** |
+| PBX domain | This server |
+
+If **Gateway in RingQ** shows **No**, open **Configure** and click **Re-run configuration** (Step C4).
+
+**Allow a few minutes.** After configuring (or re-running), Meta can take several minutes before it starts sending calls to the server. A test call made straight away may not reach RingQ; wait 5 minutes and call again.
 
 ---
 
 ## Part D. Test with a real call
 
 1. On a phone with WhatsApp, open a chat with your business number.
-2. Tap the **call** icon. (If there is no call icon, calling is not enabled for the number yet — check Part C step 4 succeeded, and that Calling is available for your country.)
-3. The destination you chose rings in RingQ; caller ID shows `WA: <caller number>`.
-4. Answer and check two-way audio.
+2. Tap the **call** icon. (If there is no call icon, calling is not enabled for the number yet — check Step C4 succeeded, and that Calling is available for your country.)
+3. The destination you chose rings in RingQ. In the RingQ web app, the dialer opens with **Ringing · Incoming Call…** and the caller's WhatsApp number, with **Accept** and **Decline**:
+
+   ![RingQ dialer ringing for an incoming WhatsApp call: Ringing, caller number (blurred), Incoming Call, Accept and Decline](../whatsapp/images/ringq-whatsapp-09-incoming-call-ringing.png)
+
+   Desk phones and the RingQ mobile app on the same extension ring too. The caller ID is the customer's WhatsApp number (shown as `WA: <number>` on phones that display the caller name).
+4. Click **Accept** and check two-way audio. Allow microphone access in the browser when asked.
+5. After the call it appears in **Recents** and **Call Logs** like any other inbound call.
+
+If nothing rings, see [Troubleshooting](#troubleshooting). Remember the few-minute delay after configuring (Step C5).
 
 ---
 
 ## Part E. Change, move or remove
+
+![RingQ WhatsApp calling → Manage: Reconfigure / change PBX with Route calls to, and Deactivate](../whatsapp/images/ringq-whatsapp-05-manage.jpg)
+
+**Reconfigure for this PBX** shows its own steps and *Reconfigured successfully*:
+
+![RingQ WhatsApp Manage after reconfigure: Meta SIP server updated, SDES confirmed, SIP password updated, gateway updated, DID and dialplan rebuilt, reconfigured successfully](../whatsapp/images/ringq-whatsapp-08-manage-reconfigured.jpg)
 
 | Task | Where |
 |---|---|
@@ -176,6 +238,9 @@ Tokens are never shown again. To keep the saved token when re-running, leave **A
 | `Meta did not return SIP password — wait 30s and retry` | Meta needs a moment after enabling SIP; click **Re-run configuration** |
 | Route calls to says *No destinations found* | No extensions, queues or IVRs in this tenant, or the `/wasip/load` call failed (the reason is shown in red) |
 | Card stays **Failed** | Open **Configure**; the failed step is marked in red with Meta's message |
+| Overview shows **Gateway in RingQ: No** after **Reconfigure** | Reconfigure only updates an existing gateway. After a **Deactivate**, use **Configure → Re-run configuration** to create it again |
+| Test call made right after configuring does not ring | Meta needs a few minutes to start sending calls; wait 5 minutes and call again |
+| Dashboard shows the `watrunk_…` trunk red / log shows `Failed Registration [403]` to `wa.meta.vc` | Normal for incoming WhatsApp calls: Meta sends calls to RingQ without this registration. Calls still ring if the gateway is Active |
 | WhatsApp shows the call but RingQ never rings | TCP 5061 blocked, or the server certificate is not valid for the FQDN |
 | Call connects with no audio | SDES not set (re-run configuration), or RTP ports blocked in the firewall |
 
