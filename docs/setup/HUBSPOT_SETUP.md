@@ -1,64 +1,116 @@
-# HubSpot setup: step by step
+# RingQ + HubSpot: complete setup guide
 
-This guide takes you from nothing to a working HubSpot integration: get the key, install, configure RingQ, test a call. For how agents use it day to day, see the [HubSpot user guide](../hubspot/USER_GUIDE.md).
+From nothing to a working HubSpot integration: create the key in HubSpot, install, configure RingQ, make a test call, and find every call and recording in HubSpot. Every step has a screenshot. Personal data in the screenshots is blurred.
+
+For day-to-day use and troubleshooting, see the [HubSpot user guide](../hubspot/USER_GUIDE.md).
 
 | | |
 |---|---|
-| **Key you need** | A HubSpot **private app access token** (starts with `pat-`) |
-| **Who creates it** | A HubSpot **Super Admin** (or a user allowed to create private apps) |
+| **Key you need** | A HubSpot **service key** (newer accounts) or **private app access token** (older accounts). Both start with `pat-` and work the same way in RingQ. |
+| **Who creates it** | A HubSpot **Super Admin** |
 | **Where it goes in RingQ** | Settings → Integrations → CRM → HubSpot → **Private app access token** |
-| **Not needed** | Your HubSpot password, a HubSpot developer account, an API key from other apps |
-| **Time** | About 10 minutes (plus the one-time server install) |
+| **Scopes** | `crm.objects.contacts.read`, `crm.objects.contacts.write` (required), `crm.objects.companies.read` (optional) |
+| **Not needed** | Your HubSpot password, a developer account, a marketplace app |
+
+Calls are made and answered in RingQ. HubSpot receives the contact lookup, one **Call** record per call, and the recording. There is no dialer inside HubSpot.
+
+**Contents**
+
+- [Part A. Create the key in HubSpot](#part-a-create-the-key-in-hubspot)
+- [Part B. Install the RingQ side on the server](#part-b-install-the-ringq-side-on-the-server-once-per-server)
+- [Part C. Configure HubSpot in RingQ](#part-c-configure-hubspot-in-ringq)
+- [Part D. Test with a real call](#part-d-test-with-a-real-call)
+- [Part E. Where calls and recordings appear in HubSpot](#part-e-where-calls-and-recordings-appear-in-hubspot)
+- [Part F. Rotate, disconnect or remove the key](#part-f-rotate-disconnect-or-remove-the-key)
+- [Checklist](#checklist)
 
 ---
 
-## Part A. Create the HubSpot access token
+## Part A. Create the key in HubSpot
 
-### Step A1. Sign in to HubSpot
+### Step A1. Sign in and open Development
 
-1. Open **https://app.hubspot.com**.
-2. Sign in as a **Super Admin** of the HubSpot account you want RingQ to log calls into.
-3. If you have several HubSpot accounts, pick the right one in the account menu (top right). The token works only for that account.
+1. Sign in at **https://app.hubspot.com** as a **Super Admin**.
+2. If you have several HubSpot accounts, open the one RingQ should log calls into. The key works only for that account.
+3. Open **Development** from the main menu (or the **Settings** gear → **Integrations**).
 
-### Step A2. Open Private Apps
+### Step A2. Check which kind of key your account uses
 
-1. Click the **Settings** icon (gear, top right).
-2. In the left menu, open **Integrations → Private Apps**.
-   - In newer HubSpot accounts this is **Development → Legacy apps**. Click **Create legacy app** and choose **Private**.
+Open **Development → Legacy Apps**.
 
-### Step A3. Create the app
+![HubSpot Development → Legacy Apps: "Legacy apps aren't available on this account" with Create a service key](../hubspot/images/hubspot-01-legacy-apps.jpg)
 
-1. Click **Create a private app**.
-2. **Basic info** tab:
-   - **Name:** `RingQ`
-   - **Description** (optional): `RingQ call logging`
-3. **Scopes** tab. Search for each scope and tick it:
+- If the page says **"Legacy apps aren't available on this account"** (as above), use a **service key**: continue with Step A3.
+- If the page lists **private apps** and offers **Create a private app**, you can use a private app instead: see [Older accounts: private app](#older-accounts-private-app) below. RingQ works the same with either.
 
-   | Scope | Required? | Why |
-   |---|---|---|
-   | `crm.objects.contacts.read` | **Required** | Find the caller's contact by phone |
-   | `crm.objects.contacts.write` | **Required** | Log calls on the contact, create contacts |
-   | `crm.objects.companies.read` | Optional | Show the company and link calls to it |
+### Step A3. Open Service Keys
 
-4. Click **Create app** (top right), then **Continue creating** to confirm.
+Go to **Development → Keys → Service Keys**.
 
-### Step A4. Copy the token
+![HubSpot Development → Keys → Service Keys, with an existing RINGQ key](../hubspot/images/hubspot-02-service-keys.jpg)
 
-1. The app opens on the **Auth** tab (or click **Auth**).
-2. Under **Access token**, click **Show token**, then **Copy**.
-3. The token starts with `pat-` (for example `pat-na1-…` or `pat-eu1-…`).
+If a key for RingQ already exists (here **RINGQ**), you can reuse it: skip to Step A6. Otherwise click **Create service key**.
 
-Keep it somewhere safe until Part C. Do not send it by chat or email: anyone with the token can read and change your HubSpot contacts.
+### Step A4. Name the key
+
+In **Name**, type `RingQ`. The name must be unique in the account.
+
+![HubSpot Create Service Key: Name field with RingQ](../hubspot/images/hubspot-03-create-key-name.jpg)
+
+### Step A5. Add the scopes
+
+1. Click **Add new scope**.
+2. In **Find a scope**, type `crm.objects.contacts` and tick:
+   - `crm.objects.contacts.read`
+   - `crm.objects.contacts.write`
+
+   ![HubSpot Add new scope: crm.objects.contacts.read and crm.objects.contacts.write ticked](../hubspot/images/hubspot-04-add-scopes.jpg)
+
+   Leave `sensitive` and `highly_sensitive` unticked; RingQ does not need them.
+3. Search `crm.objects.companies.read` and tick it (optional: shows the caller's company and links calls to it).
+4. Click **Update**. **Selected scopes** now lists the three scopes:
+
+   ![HubSpot Create Service Key: selected scopes companies.read, contacts.read, contacts.write](../hubspot/images/hubspot-05-selected-scopes.jpg)
+
+5. Click **Create** (top right).
+
+| Scope | Required? | Why |
+|---|---|---|
+| `crm.objects.contacts.read` | **Required** | Find the caller's contact by phone |
+| `crm.objects.contacts.write` | **Required** | Log calls on the contact, create contacts |
+| `crm.objects.companies.read` | Optional | Show the company and link calls to it |
+
+`crm.schemas.companies.read` is a different scope (company *properties*, not companies) and does not replace `crm.objects.companies.read`.
+
+### Step A6. Copy the key
+
+Open the key (click its name in **Service Keys**). Under **Service Key**, click **Copy**.
+
+![HubSpot service key details: Service Key (blurred) with Show and Copy, Rotate, and the key's scopes](../hubspot/images/hubspot-06-key-details.jpg)
+
+- The key starts with `pat-` (for example `pat-na2-…`).
+- **Scopes** shows what the key may do. Check that the required scopes are listed; to add one, click **Edit**.
+- Keep the key secret: anyone with it can read and change your HubSpot contacts. Don't send it by chat or email.
+
+### Older accounts: private app
+
+If your account still has private apps (**Settings → Integrations → Private Apps**, or **Development → Legacy apps → Create legacy app → Private**):
+
+1. Click **Create a private app**, name it `RingQ`.
+2. On the **Scopes** tab tick the same scopes as in Step A5.
+3. Click **Create app**, then on the **Auth** tab click **Show token** → **Copy**.
+
+The private app token also starts with `pat-` and goes into the same RingQ field.
 
 ---
 
 ## Part B. Install the RingQ side on the server (once per server)
 
-Done by the RingQ server admin, as root. The HubSpot files are already part of this backend.
+Done by the RingQ server admin, as root. The HubSpot files are part of this backend.
 
 | Step | Command / action |
 |---|---|
-| B1. Deploy this backend's `app/` | To `/var/www/ringq/app/` as usual. It includes `HubspotcrmController.php`, `app/library/Hubspot/`, `HubspotcrmTask.php`, the access rules in `app/config/services.php` and the cron line in `app/tasks/tasks.txt`. |
+| B1. Deploy this backend's `app/` | To `/var/www/ringq/app/`. It includes `HubspotcrmController.php`, `app/library/Hubspot/`, `HubspotcrmTask.php`, the access rules in `app/config/services.php` and the cron line in `app/tasks/tasks.txt`. |
 | B2. Create the tables | `sudo -u postgres psql -d ringq -v ON_ERROR_STOP=1 < app/scripts/hubspot/2026_10_21_hubspot_crm.sql` then `sudo -u postgres psql -d ringq -v ON_ERROR_STOP=1 < app/scripts/hubspot/2026_10_22_hubspot_cti.sql` |
 | B3. Recording links in nginx | In the `listen 8443` server block, **before** the static-file rule, add the block below, then `sudo nginx -t && sudo systemctl reload nginx`. |
 | B4. Reload PHP | `sudo systemctl reload php7.4-fpm` |
@@ -76,32 +128,40 @@ HubSpot only plays recording links that end in `.wav` or `.mp3`; without B3 ngin
 
 ## Part C. Configure HubSpot in RingQ
 
-### Step C1. Open the HubSpot card
+### Step C1. Open Global Settings → Integrations
 
-Sign in to RingQ as an **admin** → **Settings → Integrations → CRM** → on the **HubSpot** card click **Configure**.
+Sign in to RingQ as an **admin**. In the left menu click **Global Settings**, then under **Tools** click **Integrations**.
 
-![RingQ Settings → Integrations → CRM, with the HubSpot card](../images/ringq-crm-integrations.png)
+![RingQ Global Settings with the Integrations tile under Tools](../images/ringq-01-global-settings.png)
 
-### Step C2. Paste the token and test
+### Step C2. Open the HubSpot card
 
-![HubSpot settings: Enable switch, private app access token, granted scopes](../hubspot/images/ringq-hubspot-settings-1.png)
+On the **CRM** tab, click the **HubSpot** card (or its **Configure** link). The card shows the status: Not configured, Enabled, Disabled or Connection error.
+
+![RingQ Integrations → CRM tab with the HubSpot, Qontak and Freshdesk cards](../images/ringq-02-integrations-crm.png)
+
+### Step C3. Paste the key and test
+
+![RingQ HubSpot CRM settings: status, Enable switch, Connection, private app access token, scopes granted to the token](../hubspot/images/ringq-hubspot-dialog-1.png)
 
 1. Switch **Enable HubSpot integration** on.
-2. Paste the token from Step A4 into **Private app access token**.
-3. Click **Test connection**. RingQ checks the token and shows:
-   - **HubSpot account**: your portal number;
-   - **Scopes granted to the token**: green chips for each scope. A missing required scope is shown as an error: go back to Step A3, add it, and test again.
-4. Click **Save configuration**. **Status** changes to **Connected**.
+2. Paste the key from Step A6 into **Private app access token** (a service key goes in the same field).
+3. Click **Test connection**. RingQ checks the key and shows:
+   - **HubSpot account**: your portal number (here *Portal 247741894*);
+   - **Scopes granted to the token**: a green chip for each granted scope. *crm.objects.companies.read (optional, not granted)* means the optional company scope is missing (Step A5).
+4. Click **Save configuration**. **Status** changes to **Connected** (or *Connected · disabled* while the Enable switch is off).
 
 After saving, the field shows `Stored ••••xxxx — leave blank to keep it`. Leave it blank when you change other settings.
 
-### Step C3. Choose the call options
+### Step C4. Choose the call options
 
-![HubSpot settings: unanswered calls, company link, contact creation, screen pop, recordings](../hubspot/images/ringq-hubspot-settings-2.png)
+Scroll down in the same window.
 
-![HubSpot settings: recordings, recording link address, AI call intelligence](../hubspot/images/ringq-hubspot-settings-3.png)
+![RingQ HubSpot settings: Calls (contact panel, journaling, unanswered calls, company link, contact creation, automatic contacts) and Screen pop](../hubspot/images/ringq-hubspot-dialog-2.png)
 
-Recommended starting values:
+![RingQ HubSpot settings: screen pop and call recordings](../hubspot/images/ringq-hubspot-dialog-3.png)
+
+![RingQ HubSpot settings: recording link address and AI call intelligence](../hubspot/images/ringq-hubspot-dialog-4.png)
 
 | Setting | Recommended | Notes |
 |---|---|---|
@@ -124,32 +184,73 @@ Click **Save configuration**.
 
 1. Make sure a HubSpot contact has your test phone number in **Phone number** or **Mobile phone number**.
 2. Call the RingQ extension from that phone (or dial the number from RingQ).
-3. **While it rings**, the RingQ contact panel shows the HubSpot contact. In HubSpot, the contact's **Activity** timeline already shows a **Call** with status *Ringing*.
+3. **While it rings**, the RingQ contact panel shows the HubSpot contact, and the call already appears in HubSpot with status *Ringing*.
 4. Answer, talk a few seconds, hang up.
 5. In the RingQ panel: **Logged**. Add a note, pick an outcome, click **Save notes**.
 
 ![RingQ contact panel after a call, logged on the HubSpot timeline with recording](../hubspot/images/ringq-hubspot-call-popup.png)
 
-6. In HubSpot, open the contact → **Activity** → the **Call** card. Check the title (includes `RQ…`), direction, status **Completed**, duration and notes.
-7. About a minute later, the call card shows a **play** control for the recording.
+6. Check HubSpot as shown in Part E. The recording is added about a minute after hang-up.
 
 If something is missing, see [Troubleshooting](../hubspot/USER_GUIDE.md#8-troubleshooting).
 
 ---
 
-## Part E. Change or remove the token
+## Part E. Where calls and recordings appear in HubSpot
+
+### E1. All calls
+
+**CRM → Calls** (or **Activities → Calls**) lists every call RingQ logged. **Recorded calls** shows only calls with a recording.
+
+![HubSpot Calls list: RingQ calls with title, date, direction and outcome](../hubspot/images/hubspot-07-calls-list.jpg)
+
+| Column | Content |
+|---|---|
+| Call Title | `Inbound call from <contact> - Answered - RQ…` (direction, contact, result, RingQ call reference) |
+| Call direction | Inbound / Outbound |
+| Call outcome | Connected, No answer, Busy… |
+
+The same call also appears on the **contact's Activity timeline** (Contacts → the contact → Activity → Calls).
+
+### E2. One call, with the recording
+
+Click a call title. The call record shows the result, the **recording player** (play, skip ±15 s, speed) and the date.
+
+![HubSpot call record: Connected, recording player](../hubspot/images/hubspot-08-call-record.jpg)
+
+### E3. Call notes
+
+Under **Summary & notes → Notes**, RingQ writes the call details:
+
+![HubSpot call notes written by RingQ: notes, direction, result, number, agent, talk time, RingQ call reference](../hubspot/images/hubspot-09-call-notes.jpg)
+
+| Line | Content |
+|---|---|
+| Notes | The agent's notes from the RingQ panel |
+| Direction / Result | Inbound or Outbound; Answered, No answer… |
+| Number | The other party's number (or extension) |
+| Agent | The RingQ agent and extension |
+| Started via | RingQ dialer |
+| Talk time / Total time | Talk time and full call time |
+| RingQ call reference | `RQ…`, the same as in RingQ Call Logs |
+| Transcription | Only when AI transcription is on |
+
+---
+
+## Part F. Rotate, disconnect or remove the key
 
 | Task | How |
 |---|---|
-| **Rotate** (token shared or leaked) | HubSpot → Settings → Integrations → Private Apps → **RingQ** → **Auth** → **Rotate**. Paste the new token in RingQ (Step C2) and save. |
-| **Disconnect** | RingQ HubSpot settings → **Disconnect**. Deletes the stored token, stops logging and revokes recording links. Calls already in HubSpot stay. |
-| **Remove completely** | Disconnect in RingQ, then delete the **RingQ** private app in HubSpot. |
+| **Rotate** (key shared or leaked) | HubSpot → Development → Keys → Service Keys → **RingQ** → **Rotate**. For a private app: the app → **Auth** → **Rotate**. Paste the new key in RingQ (Step C3) and save. |
+| **Change scopes** | Open the key → **Edit** → add or remove scopes. The key stays the same. |
+| **Disconnect** | RingQ HubSpot settings → **Disconnect**. Deletes the stored key, stops logging and revokes recording links. Calls already in HubSpot stay. |
+| **Remove completely** | Disconnect in RingQ, then delete the key (or private app) in HubSpot. |
 
 ---
 
 ## Checklist
 
-- [ ] Private app **RingQ** created with `crm.objects.contacts.read` and `crm.objects.contacts.write`
+- [ ] Service key (or private app) **RingQ** with `crm.objects.contacts.read` and `crm.objects.contacts.write`
 - [ ] Server: tables created, nginx recording rule added, PHP reloaded, `/hubspotcrm/config` answers 401
-- [ ] RingQ: token pasted, **Test connection** green, **Save configuration**, status **Connected**
-- [ ] Test call shows on the HubSpot contact's timeline, with the recording
+- [ ] RingQ: key pasted, **Test connection** green, **Save configuration**, status **Connected**
+- [ ] Test call appears under HubSpot **Calls** and on the contact, with the recording
